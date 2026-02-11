@@ -8,6 +8,7 @@ type DeckCard = {
   year: number;
   kind: "movie" | "tv";
   reason: string;
+  posterPath: string | null;
 };
 
 export default function Home() {
@@ -78,18 +79,41 @@ export default function Home() {
 
         {cards.length > 0 && index < cards.length && current && (
           <div className="mt-8 rounded border border-gray-700 bg-gray-950 p-4 text-left space-y-2">
+            {/* Poster */}
+            {current.posterPath ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`https://image.tmdb.org/t/p/w500${current.posterPath}`}
+                alt={`${current.title} poster`}
+                className="w-full rounded mb-3 border border-gray-800"
+                loading="lazy"
+              />
+            ) : (
+              <div className="w-full aspect-[2/3] rounded mb-3 bg-gray-900 border border-gray-800 flex items-center justify-center text-gray-500 text-sm">
+                No poster
+              </div>
+            )}
+
+            {/* Header row */}
             <div className="flex items-center justify-between">
               <span className="text-xs text-gray-400">
                 Card {index + 1} / {cards.length}
               </span>
-              <span className="text-xs text-gray-400">{current.kind.toUpperCase()}</span>
+              <span className="text-xs text-gray-400">
+                {current.kind.toUpperCase()}
+              </span>
             </div>
 
+            {/* Title */}
             <div className="text-lg font-semibold">
-              {current.title} <span className="text-gray-400">({current.year})</span>
+              {current.title}{" "}
+              <span className="text-gray-400">({current.year})</span>
             </div>
+
+            {/* Reason */}
             <div className="text-sm text-gray-400">{current.reason}</div>
 
+            {/* Buttons */}
             <div className="mt-4 flex gap-3">
               <button
                 onClick={pass}

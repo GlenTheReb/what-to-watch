@@ -7,6 +7,7 @@ type DeckCard = {
   year: number;
   kind: "movie" | "tv";
   reason: string;
+  posterPath: string | null;
 };
 
 function yearFromDate(dateStr: string | undefined): number {
@@ -31,6 +32,7 @@ export async function POST() {
     year: yearFromDate(m.release_date),
     kind: "movie",
     reason: "Popular with strong vote count",
+    posterPath: m.poster_path,
   }));
 
   return NextResponse.json({
