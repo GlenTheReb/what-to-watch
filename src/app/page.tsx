@@ -116,7 +116,7 @@ export default function Home() {
                 loading="lazy"
               />
             ) : (
-              <div className="w-full aspect-[2/3] rounded mb-3 bg-gray-900 border border-gray-800 flex items-center justify-center text-gray-500 text-sm">
+              <div className="w-full aspect-2/3 rounded mb-3 bg-gray-900 border border-gray-800 flex items-center justify-center text-gray-500 text-sm">
                 No poster
               </div>
             )}
