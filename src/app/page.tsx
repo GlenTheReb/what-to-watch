@@ -17,6 +17,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [cards, setCards] = useState<DeckCard[]>([]);
   const [index, setIndex] = useState(0);
+  const [reroll, setReroll] = useState(0);
 
   const current = cards[index];
 
@@ -25,13 +26,14 @@ export default function Home() {
     setError(null);
     setCards([]);
     setIndex(0);
+    setReroll(0);
 
     try {
       const res = await fetch("/api/deck", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // we’re not using this server-side yet, but keep it ready
-        body: JSON.stringify({ q: query }),
+        body: JSON.stringify({ q: query, reroll }),
       });
 
       if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -52,6 +54,31 @@ export default function Home() {
 
   function pass() {
     setIndex((i) => Math.min(i + 1, cards.length));
+  }
+
+  async function rerollPicks() {
+    setLoading(true);
+    setError(null);
+    setIndex(0);
+
+    const next = reroll + 1;
+    setReroll(next);
+
+    try {
+      const res = await fetch("/api/deck", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ q: query, reroll: next }),
+      });
+
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      const data = (await res.json()) as { cards: DeckCard[] };
+      setCards(data.cards ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -126,6 +153,13 @@ export default function Home() {
                 className="flex-1 px-4 py-2 rounded bg-white text-black font-medium"
               >
                 Keep
+              </button>
+              <button
+                onClick={rerollPicks}
+                disabled={loading || cards.length === 0}
+                className="w-full mt-3 px-4 py-2 rounded border border-gray-700 hover:border-gray-500 disabled:opacity-60"
+              >
+                Another 10
               </button>
             </div>
           </div>

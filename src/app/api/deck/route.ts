@@ -47,12 +47,31 @@ function shuffleInPlace<T>(arr: T[], rand: () => number) {
   }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   const cookieStore = await cookies();
   let sessionId = cookieStore.get("sessionId")?.value;
 
   if (!sessionId) {
     sessionId = crypto.randomUUID();
+  }
+
+  let body: unknown;
+
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
+
+  let reroll = 0;
+
+  if (
+    typeof body === "object" &&
+    body !== null &&
+    "reroll" in body &&
+    typeof (body as { reroll: unknown }).reroll === "number"
+  ) {
+    reroll = (body as { reroll: number }).reroll;
   }
 
   const [discover1, trending, topRated1] = await Promise.all([
@@ -71,7 +90,8 @@ export async function POST() {
     .filter((m) => m.poster_path)
     .filter((m) => m.vote_count >= 200); // keep quality baseline
 
-  const seed = hashStringToSeed(sessionId + new Date().toDateString());
+  const day = new Date().toDateString();
+  const seed = hashStringToSeed(`${sessionId}:${day}:${reroll}`);
   const rand = mulberry32(seed);
   shuffleInPlace(candidates, rand);
 
