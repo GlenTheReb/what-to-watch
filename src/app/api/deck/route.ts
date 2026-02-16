@@ -1,10 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  fetchDiscoverMovies,
-  fetchTrendingMovies,
-  fetchTopRatedMovies,
-  fetchDiscoverCustom,
-} from "@/lib/tmdb";
+import { fetchDiscoverCustom } from "@/lib/tmdb";
 
 import { cookies } from "next/headers";
 
@@ -131,6 +126,33 @@ function makeSignature(q: string): Signature {
   };
 }
 
+function buildGenreWeights(
+  mergedMovies: { id: number; genre_ids?: number[] }[],
+  likes: string[],
+  passes: string[],
+) {
+  const likeSet = new Set(likes);
+  const passSet = new Set(passes);
+
+  const likeCounts = new Map<number, number>();
+  const passCounts = new Map<number, number>();
+
+  for (const m of mergedMovies) {
+    const idStr = String(m.id);
+    const genres = m.genre_ids ?? [];
+
+    if (likeSet.has(idStr)) {
+      for (const g of genres) likeCounts.set(g, (likeCounts.get(g) ?? 0) + 1);
+    }
+
+    if (passSet.has(idStr)) {
+      for (const g of genres) passCounts.set(g, (passCounts.get(g) ?? 0) + 1);
+    }
+  }
+
+  return { likeCounts, passCounts };
+}
+
 function scoreMovie(
   m: {
     overview?: string;
@@ -140,6 +162,8 @@ function scoreMovie(
     genre_ids?: number[];
   },
   sig: Signature,
+  likeCounts: Map<number, number>,
+  passCounts: Map<number, number>,
 ): number {
   let s = 0;
 
@@ -180,6 +204,16 @@ function scoreMovie(
       text.includes("strange"))
   )
     s += 6;
+
+  // Taste shaping: boost genres the user keeps, penalise genres they pass
+  // (gentle weights so it guides rather than hijacks)
+  const genresArr = m.genre_ids ?? [];
+  for (const g of genresArr) {
+    const likeBoost = (likeCounts.get(g) ?? 0) * 2; // +2 per like in that genre
+    const passPenalty = (passCounts.get(g) ?? 0) * 1; // -1 per pass in that genre
+    s += likeBoost;
+    s -= passPenalty;
+  }
 
   return s;
 }
@@ -297,6 +331,8 @@ export async function POST(request: Request) {
     byId.set(m.id, m);
   }
 
+  const { likeCounts, passCounts } = buildGenreWeights(merged, likes, passes);
+
   const minVotes = sig.underrated ? 50 : 200;
 
   // In gems mode, avoid ultra-mainstream by excluding very high popularity titles
@@ -345,7 +381,7 @@ export async function POST(request: Request) {
   const rand = mulberry32(seed);
   // Rank candidates based on the prompt signature
   const ranked = filtered
-    .map((m) => ({ m, s: scoreMovie(m, sig) }))
+    .map((m) => ({ m, s: scoreMovie(m, sig, likeCounts, passCounts) }))
     .sort((a, b) => b.s - a.s)
     .map((x) => x.m);
 
