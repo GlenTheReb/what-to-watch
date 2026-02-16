@@ -1,36 +1,150 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# What to Watch
 
-## Getting Started
+A deterministic, cache-aware movie recommendation engine built on top of TMDB.
 
-First, run the development server:
+This project explores how far structured data, ranking logic, and lightweight preference modelling can go before relying on large language models.
 
-```bash
-npm run dev
+---
+
+## Why This Exists
+
+Most “AI recommendation” demos either:
+- Wrap an API and reshuffle popular titles, or  
+- Delegate everything to an LLM.
+
+This project takes a different approach.
+
+It treats recommendation as a **ranking and systems problem**, not a generation problem.
+
+User input is translated into structured signals. A curated candidate pool is built from TMDB Discover slices. Movies are scored deterministically using:
+
+- Quality signals (vote average + vote count)
+- Genre intent matching
+- Free-text topic matching against overviews
+- Popularity bias controls (e.g. underrated mode)
+- Personalised genre weights derived from Keep/Pass history
+
+No generative AI is required for core functionality.
+
+---
+
+## Core Features
+
+- Free-text prompt input
+- Curated candidate pool using TMDB Discover (not trending/top lists)
+- Deterministic seeded shuffling (session + day + reroll)
+- Local preference learning (genre-weighted boosting)
+- No repeats across swipes
+- Stateless design (no accounts, no database)
+
+---
+
+## Architecture
+
+### Frontend
+- Next.js (App Router)
+- TypeScript
+- TailwindCSS
+- React state + LocalStorage preference tracking
+
+### Backend
+- Next.js Route Handler (`/api/deck`)
+- TMDB API
+- Custom ranking pipeline
+- Deterministic seeded PRNG
+- Cache layer (Redis-ready)
+
+### Candidate Strategy
+
+Instead of relying on trending or top-rated lists, the system builds pools from:
+
+- Multiple year slices
+- Rating thresholds
+- Vote count thresholds
+- Optional genre constraints
+
+This reduces mainstream bias and improves variety.
+
+---
+
+## Ranking Pipeline
+
+1. Build candidate pool from Discover slices
+2. Remove seen IDs (likes + passes)
+3. Apply hard genre filtering when intent is clear
+4. Score each movie using:
+   - Quality baseline
+   - Intent matching
+   - Topic token hits
+   - Underrated / bad-movie modifiers
+   - Personal genre weight boosts
+5. Deterministically shuffle top bucket for variety
+6. Return 10 cards
+
+The system is fully deterministic for a given session, day, and reroll index.
+
+---
+
+## Learning Model
+
+Keep and Pass actions are not just stored.
+
+They are converted into genre weight maps:
+
+- Genres frequently kept receive a positive score multiplier.
+- Genres frequently passed receive a negative adjustment.
+
+This gradually reshapes the ranking space without needing persistent storage.
+
+---
+
+## Environment Variables
+
+Create `.env.local`:
+
+```
+TMDB_READ_TOKEN=your_tmdb_bearer_token
 # or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+TMDB_API_KEY=your_tmdb_api_key
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Local Development
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+npm install
+npm run dev
+```
 
-## Learn More
+Runs at:
 
-To learn more about Next.js, take a look at the following resources:
+```
+http://localhost:3000
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Design Principles
 
-## Deploy on Vercel
+- Deterministic over generative
+- Ranking logic over randomness
+- Cache-friendly architecture
+- Minimal API surface
+- AI as translator, not database
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Roadmap
+
+- Semantic expansion layer (LLM translator with caching)
+- Overview embeddings for vector similarity
+- Actor/director preference modelling
+- Kubernetes deployment with Redis backing
+
+---
+
+## Status
+
+Active development.
+Core ranking, filtering, and local preference shaping implemented.
