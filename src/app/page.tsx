@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type DeckCard = {
   id: string;
@@ -11,6 +11,27 @@ type DeckCard = {
   posterPath: string | null;
 };
 
+const LS_LIKES = "wtw:likes";
+const LS_PASSES = "wtw:passes";
+
+function loadSet(key: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(key);
+    const arr = raw ? (JSON.parse(raw) as string[]) : [];
+    return new Set(arr);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSet(key: string, set: Set<string>) {
+  try {
+    localStorage.setItem(key, JSON.stringify(Array.from(set)));
+  } catch {
+    // ignore storage issues
+  }
+}
+
 export default function Home() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,8 +39,15 @@ export default function Home() {
   const [cards, setCards] = useState<DeckCard[]>([]);
   const [index, setIndex] = useState(0);
   const [reroll, setReroll] = useState(0);
+  const [likes, setLikes] = useState<Set<string>>(new Set());
+  const [passes, setPasses] = useState<Set<string>>(new Set());
 
   const current = cards[index];
+
+  useEffect(() => {
+    setLikes(loadSet(LS_LIKES));
+    setPasses(loadSet(LS_PASSES));
+  }, []);
 
   async function getPicks() {
     setLoading(true);
@@ -32,8 +60,12 @@ export default function Home() {
       const res = await fetch("/api/deck", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // we’re not using this server-side yet, but keep it ready
-        body: JSON.stringify({ q: query, reroll }),
+        body: JSON.stringify({
+          q: query,
+          reroll: 0,
+          likes: Array.from(likes).slice(-200),
+          passes: Array.from(passes).slice(-200),
+        }),
       });
 
       if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -48,11 +80,28 @@ export default function Home() {
   }
 
   function keep() {
-    // later: store in localStorage watchlist
+    if (!current) return;
+
+    setLikes((prev) => {
+      const next = new Set(prev);
+      next.add(current.id);
+      saveSet(LS_LIKES, next);
+      return next;
+    });
+
     setIndex((i) => Math.min(i + 1, cards.length));
   }
 
   function pass() {
+    if (!current) return;
+
+    setPasses((prev) => {
+      const next = new Set(prev);
+      next.add(current.id);
+      saveSet(LS_PASSES, next);
+      return next;
+    });
+
     setIndex((i) => Math.min(i + 1, cards.length));
   }
 
@@ -68,7 +117,12 @@ export default function Home() {
       const res = await fetch("/api/deck", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: query, reroll: next }),
+        body: JSON.stringify({
+          q: query,
+          reroll: next,
+          likes: Array.from(likes).slice(-200),
+          passes: Array.from(passes).slice(-200),
+        }),
       });
 
       if (!res.ok) throw new Error(`API error: ${res.status}`);

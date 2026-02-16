@@ -3,7 +3,9 @@ import {
   fetchDiscoverMovies,
   fetchTrendingMovies,
   fetchTopRatedMovies,
+  fetchDiscoverCustom,
 } from "@/lib/tmdb";
+
 import { cookies } from "next/headers";
 
 type DeckCard = {
@@ -46,6 +48,13 @@ function shuffleInPlace<T>(arr: T[], rand: () => number) {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
 }
+
+const GENRE = {
+  animation: 16,
+  comedy: 35,
+  horror: 27,
+  mystery: 9648,
+} as const;
 
 type Signature = {
   anime: boolean;
@@ -128,6 +137,7 @@ function scoreMovie(
     vote_average?: number;
     vote_count?: number;
     popularity?: number;
+    genre_ids?: number[];
   },
   sig: Signature,
 ): number {
@@ -137,40 +147,32 @@ function scoreMovie(
   const voteCount = m.vote_count ?? 0;
   const popularity = m.popularity ?? 0;
 
-  // Baseline: quality + confidence (log vote count so it doesn’t dominate)
+  // Baseline: quality + confidence
   s += voteAvg * 2;
   s += Math.log10(voteCount + 1) * 3;
 
+  // Genre-based intent matching (THIS is the big fix)
+  const genres = new Set(m.genre_ids ?? []);
+  if (sig.comedy && genres.has(GENRE.comedy)) s += 18;
+  if (sig.horror && genres.has(GENRE.horror)) s += 18;
+  if (sig.mystery && genres.has(GENRE.mystery)) s += 14;
+
+  // Anime proxy: animation genre
+  if (sig.anime && genres.has(GENRE.animation)) s += 10;
+
   // "Underrated" bias: favour lower popularity while still rated
   if (sig.underrated) {
-    s += Math.max(0, 30 - Math.log10(popularity + 1) * 10); // lower popularity → higher boost
+    s += Math.max(0, 30 - Math.log10(popularity + 1) * 10);
   }
 
   // "Bad movie" bias: invert some quality preferences
   if (sig.badMovie) {
     s -= voteAvg * 2;
-    s += Math.log10(popularity + 1) * 2; // popular bad movies tend to be “fun bad”
+    s += Math.log10(popularity + 1) * 2;
   }
 
+  // Extra text nudges (secondary, not primary)
   const text = (m.overview ?? "").toLowerCase();
-
-  // Soft matching (works surprisingly well even with just overviews)
-  if (sig.comedy && (text.includes("comedy") || text.includes("hilarious")))
-    s += 6;
-  if (
-    sig.horror &&
-    (text.includes("horror") ||
-      text.includes("terror") ||
-      text.includes("killer"))
-  )
-    s += 6;
-  if (
-    sig.mystery &&
-    (text.includes("mystery") ||
-      text.includes("detective") ||
-      text.includes("investigation"))
-  )
-    s += 6;
   if (
     sig.trippy &&
     (text.includes("surreal") ||
@@ -178,10 +180,6 @@ function scoreMovie(
       text.includes("strange"))
   )
     s += 6;
-
-  // “Anime” is not reliably detectable from overview; treat it as a weak hint for now
-  if (sig.anime && (text.includes("animated") || text.includes("animation")))
-    s += 2;
 
   return s;
 }
@@ -210,21 +208,90 @@ export async function POST(request: Request) {
 
   const sig = makeSignature(q);
 
-  const [discover1, discover2, trending, topRated1, topRated2] =
-    await Promise.all([
-      fetchDiscoverMovies(1),
-      fetchDiscoverMovies(2),
-      fetchTrendingMovies(),
-      fetchTopRatedMovies(1),
-      fetchTopRatedMovies(2),
-    ]);
+  const likes =
+    typeof body === "object" &&
+    body !== null &&
+    "likes" in body &&
+    Array.isArray((body as Record<string, unknown>).likes)
+      ? ((body as Record<string, unknown>).likes as unknown[]).filter(
+          (x): x is string => typeof x === "string",
+        )
+      : [];
+
+  const passes =
+    typeof body === "object" &&
+    body !== null &&
+    "passes" in body &&
+    Array.isArray((body as Record<string, unknown>).passes)
+      ? ((body as Record<string, unknown>).passes as unknown[]).filter(
+          (x): x is string => typeof x === "string",
+        )
+      : [];
+
+  const seenIds = new Set([...likes, ...passes]);
+
+  const genreCsv = sig.comedy
+    ? String(GENRE.comedy)
+    : sig.horror
+      ? String(GENRE.horror)
+      : sig.mystery
+        ? String(GENRE.mystery)
+        : sig.anime
+          ? String(GENRE.animation)
+          : "";
+
+  const today = new Date();
+  const year = today.getFullYear();
+
+  const sliceAStart = `${year - 30}-01-01`;
+  const sliceAEnd = `${year - 20}-12-31`;
+
+  const sliceBStart = `${year - 20}-01-01`;
+  const sliceBEnd = `${year - 10}-12-31`;
+
+  const [sliceA1, sliceA2, sliceB1, sliceB2] = await Promise.all([
+    fetchDiscoverCustom({
+      page: 1,
+      sort_by: "vote_average.desc",
+      vote_count_gte: sig.underrated ? 50 : 200,
+      vote_average_gte: 6.5,
+      with_genres: genreCsv || undefined,
+      primary_release_date_gte: sliceAStart,
+      primary_release_date_lte: sliceAEnd,
+    }),
+    fetchDiscoverCustom({
+      page: 2,
+      sort_by: "vote_average.desc",
+      vote_count_gte: sig.underrated ? 50 : 200,
+      vote_average_gte: 6.5,
+      with_genres: genreCsv || undefined,
+      primary_release_date_gte: sliceAStart,
+      primary_release_date_lte: sliceAEnd,
+    }),
+    fetchDiscoverCustom({
+      page: 1,
+      sort_by: "vote_average.desc",
+      vote_count_gte: sig.underrated ? 50 : 200,
+      vote_average_gte: 6.5,
+      with_genres: genreCsv || undefined,
+      primary_release_date_gte: sliceBStart,
+      primary_release_date_lte: sliceBEnd,
+    }),
+    fetchDiscoverCustom({
+      page: 2,
+      sort_by: "vote_average.desc",
+      vote_count_gte: sig.underrated ? 50 : 200,
+      vote_average_gte: 6.5,
+      with_genres: genreCsv || undefined,
+      primary_release_date_gte: sliceBStart,
+      primary_release_date_lte: sliceBEnd,
+    }),
+  ]);
 
   // merge + de-dupe by TMDB id
-  const byId = new Map<number, (typeof discover1)[number]>();
+  const byId = new Map<number, (typeof sliceA1)[number]>();
 
-  const merged = sig.underrated
-    ? [...discover1, ...discover2] // avoid topRated/trending for gems mode
-    : [...trending, ...topRated1, ...topRated2, ...discover1, ...discover2];
+  const merged = [...sliceA1, ...sliceA2, ...sliceB1, ...sliceB2];
 
   for (const m of merged) {
     byId.set(m.id, m);
@@ -238,13 +305,46 @@ export async function POST(request: Request) {
   const candidates = Array.from(byId.values())
     .filter((m) => m.poster_path)
     .filter((m) => (m.vote_count ?? 0) >= minVotes)
-    .filter((m) => (m.popularity ?? 0) <= maxPopularity);
+    .filter((m) => (m.popularity ?? 0) <= maxPopularity)
+    .filter((m) => !seenIds.has(String(m.id)));
+
+  // Hard-filter for clear single-genre intents (prevents "random classics" for simple prompts)
+  let filtered = candidates;
+
+  const intentCount = [sig.anime, sig.comedy, sig.horror, sig.mystery].filter(
+    Boolean,
+  ).length;
+
+  const isSingleGenreIntent =
+    intentCount === 1 && !sig.underrated && !sig.badMovie;
+
+  if (isSingleGenreIntent) {
+    if (sig.comedy)
+      filtered = filtered.filter((m) =>
+        (m.genre_ids ?? []).includes(GENRE.comedy),
+      );
+    if (sig.horror)
+      filtered = filtered.filter((m) =>
+        (m.genre_ids ?? []).includes(GENRE.horror),
+      );
+    if (sig.mystery)
+      filtered = filtered.filter((m) =>
+        (m.genre_ids ?? []).includes(GENRE.mystery),
+      );
+    if (sig.anime)
+      filtered = filtered.filter((m) =>
+        (m.genre_ids ?? []).includes(GENRE.animation),
+      );
+
+    // Safety fallback: if filter becomes too small, revert to unfiltered candidates
+    if (filtered.length < 25) filtered = candidates;
+  }
 
   const day = new Date().toDateString();
   const seed = hashStringToSeed(`${sessionId}:${day}:${reroll}`);
   const rand = mulberry32(seed);
   // Rank candidates based on the prompt signature
-  const ranked = candidates
+  const ranked = filtered
     .map((m) => ({ m, s: scoreMovie(m, sig) }))
     .sort((a, b) => b.s - a.s)
     .map((x) => x.m);
@@ -277,13 +377,20 @@ export async function POST(request: Request) {
     title: m.title,
     year: yearFromDate(m.release_date),
     kind: "movie",
-    reason: trending.some((t) => t.id === m.id)
-      ? "Trending this week"
-      : topRated1.some((t) => t.id === m.id)
-        ? "Highly rated"
-        : sig.underrated
-          ? "Underrated pick"
-          : "Popular with strong vote count",
+    reason: sig.underrated
+      ? "Underrated pick"
+      : sig.badMovie
+        ? "So-bad-it’s-good energy"
+        : sig.trippy
+          ? "Trippy vibes match"
+          : sig.comedy
+            ? "Comedy match"
+            : sig.horror
+              ? "Horror match"
+              : sig.mystery
+                ? "Mystery match"
+                : "Curated pick",
+
     posterPath: m.poster_path,
   }));
 
