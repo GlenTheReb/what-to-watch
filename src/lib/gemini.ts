@@ -8,6 +8,8 @@ export type ParsedIntent = {
   themes: string[];
   keywords: string[];
   referenceTitles: string[];
+  people: string[];
+  strategies: string[];
   mediaType: "movie" | "tv" | "any";
   quality: "acclaimed" | "underrated" | "any" | "bad";
   description: string;
@@ -20,12 +22,14 @@ const DEFAULT_INTENT: ParsedIntent = {
   themes: [],
   keywords: [],
   referenceTitles: [],
+  people: [],
+  strategies: ["discover"],
   mediaType: "any",
   quality: "any",
   description: "General recommendations",
 };
 
-const SYSTEM_PROMPT = `You are a movie/TV recommendation intent parser. Extract structured info from the user's query about what they want to watch.
+const SYSTEM_PROMPT = `You are a movie/TV recommendation intent parser and pipeline router. Extract structured info from the user's query about what they want to watch.
 
 Return JSON with exactly these fields:
 {
@@ -33,20 +37,30 @@ Return JSON with exactly these fields:
   "decades": string[] - e.g. ["1990s", "2020s"]. Empty if not specified.
   "mood": string - one of: "lighthearted", "dark", "intense", "cerebral", "emotional", "adventurous", "relaxing", "nostalgic", "any".
   "themes": string[] - broad thematic tags like "time travel", "heist", "zombie". Empty if none.
-  "keywords": string[] - TMDB-style keyword tags describing specific plot elements, settings, or character types. Think about what makes content similar. Generate 3-8 specific keywords. Examples: "drug trade", "organized crime", "double life", "anti-hero", "moral decay", "high school", "serial killer", "space exploration".
-  "referenceTitles": string[] - If the user mentions specific movies/shows by name (e.g. "like Breaking Bad", "similar to Inception", "Narcos type"), extract the EXACT title names here. Empty if none mentioned.
+  "keywords": string[] - TMDB-style keyword tags. These MUST be concrete, searchable plot elements that would appear on a movie's TMDB page. Think: what specific settings, occupations, substances, activities, or plot devices define this content? Generate 5-10 keywords. AVOID vague words like "consequences", "power struggle", "transformation", "double life". PREFER concrete words like "methamphetamine", "drug cartel", "chemistry teacher", "desert", "money laundering", "DEA", "cancer diagnosis".
+  "referenceTitles": string[] - If the user mentions specific movies/shows by name (e.g. "like Breaking Bad"), extract the EXACT title names here.
+  "people": string[] - If the user mentions specific actors or directors (e.g. "starring Tom Hanks", "directed by Nolan"), extract their names here. Empty if none.
+  "strategies": string[] - VERY IMPORTANT. Select one or more routing strategies based on the query. Options:
+    - "trending": If user asks for "popular right now", "trending", "what everyone is watching".
+    - "popular": If user asks for "popular", "most popular" (but not necessarily trending right now).
+    - "top_rated": If user asks for "best of all time", "highest rated".
+    - "upcoming": If user asks for "in theaters", "coming soon", "new releases".
+    - "person_credits": If the user mentions specific actors or directors (must also populate "people" array).
+    - "recommendations": If user says "like [Movie/Show]" or "similar to [Title]".
+    - "discover": The default strategy for anything else (genres, moods, themes, decades). Use this if none of the above perfectly match.
   "mediaType": string - "movie", "tv", or "any". Default "any".
   "quality": string - "acclaimed", "underrated", "bad" (so-bad-it's-good), or "any". Default "any".
   "description": string - brief 1-line summary of what the user wants.
 }
 
 Examples:
-- "funny movies from the 90s" → {"genres":["comedy"],"decades":["1990s"],"mood":"lighthearted","themes":[],"keywords":["slapstick","buddy comedy","parody"],"referenceTitles":[],"mediaType":"movie","quality":"any","description":"90s comedies"}
-- "shows like breaking bad" → {"genres":["crime","drama","thriller"],"decades":[],"mood":"intense","themes":["drugs","crime"],"keywords":["drug trade","meth","double life","anti-hero","moral decay","crime boss","family secret"],"referenceTitles":["Breaking Bad"],"mediaType":"tv","quality":"acclaimed","description":"Intense crime dramas like Breaking Bad"}
-- "underrated sci-fi" → {"genres":["science_fiction"],"decades":[],"mood":"any","themes":[],"keywords":["dystopia","alien","space","artificial intelligence","time travel"],"referenceTitles":[],"mediaType":"any","quality":"underrated","description":"Hidden gem sci-fi"}
-- "movies like inception" → {"genres":["science_fiction","thriller","action"],"decades":[],"mood":"cerebral","themes":["dreams","reality"],"keywords":["dream","subconscious","heist","mind-bending","layered reality"],"referenceTitles":["Inception"],"mediaType":"movie","quality":"acclaimed","description":"Mind-bending thrillers like Inception"}
+- "funny movies from the 90s" → {"genres":["comedy"],"decades":["1990s"],"mood":"lighthearted","themes":[],"keywords":["slapstick","buddy comedy","parody"],"referenceTitles":[],"people":[],"strategies":["discover"],"mediaType":"movie","quality":"any","description":"90s comedies"}
+- "movies starring tom hanks" → {"genres":[],"decades":[],"mood":"any","themes":[],"keywords":[],"referenceTitles":[],"people":["Tom Hanks"],"strategies":["person_credits"],"mediaType":"movie","quality":"any","description":"Movies starring Tom Hanks"}
+- "what is trending right now" → {"genres":[],"decades":[],"mood":"any","themes":[],"keywords":[],"referenceTitles":[],"people":[],"strategies":["trending"],"mediaType":"any","quality":"any","description":"Trending movies and TV"}
+- "movies like breaking bad" → {"genres":["crime","drama","thriller"],"decades":[],"mood":"intense","themes":["drugs","crime","moral decay"],"keywords":["drug dealer","methamphetamine","drug cartel","money laundering","organized crime","drug trafficking","drug lord","cocaine"],"referenceTitles":["Breaking Bad"],"people":[],"strategies":["recommendations"],"mediaType":"movie","quality":"acclaimed","description":"Intense crime movies like Breaking Bad"}
+- "shows like breaking bad" → {"genres":["crime","drama","thriller"],"decades":[],"mood":"intense","themes":["drugs","crime","moral decay"],"keywords":["drug dealer","methamphetamine","drug cartel","money laundering","organized crime","drug trafficking"],"referenceTitles":["Breaking Bad"],"people":[],"strategies":["recommendations"],"mediaType":"tv","quality":"acclaimed","description":"Intense crime dramas like Breaking Bad"}
 
-Be generous with keyword generation — keywords are the PRIMARY way we find similar content.`;
+IMPORTANT: Keywords are used to search the TMDB keyword database. Use concrete nouns and specific plot elements that would actually be tagged on movie/TV pages. For "like X" queries, think about what SPECIFIC elements make that show unique and what other content shares those elements.`;
 
 function fallbackInterpret(query: string): ParsedIntent {
   const t = query.toLowerCase();
@@ -57,6 +71,8 @@ function fallbackInterpret(query: string): ParsedIntent {
     themes: [],
     keywords: [],
     referenceTitles: [],
+    people: [],
+    strategies: [],
     description: query || "General picks",
   };
 
@@ -94,6 +110,14 @@ function fallbackInterpret(query: string): ParsedIntent {
   const likeMatch = t.match(/(?:like|similar to|type of)\s+(.+?)(?:\s*$|,)/);
   if (likeMatch) intent.referenceTitles.push(likeMatch[1].trim());
 
+  if (/trending|popular right now|everyone is watching/.test(t)) intent.strategies.push("trending");
+  if (/popular/.test(t) && !intent.strategies.includes("trending")) intent.strategies.push("popular");
+  if (/top rated|best of all time/.test(t)) intent.strategies.push("top_rated");
+  if (/upcoming|in theaters|new release/.test(t)) intent.strategies.push("upcoming");
+  if (intent.referenceTitles.length > 0) intent.strategies.push("recommendations");
+  
+  if (intent.strategies.length === 0) intent.strategies.push("discover");
+
   return intent;
 }
 
@@ -101,7 +125,7 @@ export async function interpretPrompt(query: string): Promise<ParsedIntent> {
   if (!query.trim()) return { ...DEFAULT_INTENT };
 
   const normalised = query.trim().toLowerCase().slice(0, 200);
-  const cacheKey = `gemini:intent:${normalised}:v3`;
+  const cacheKey = `gemini:intent:${normalised}:v4`;
 
   const cached = await getJson<ParsedIntent>(cacheKey);
   if (cached) {
@@ -118,7 +142,7 @@ export async function interpretPrompt(query: string): Promise<ParsedIntent> {
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
+      model: "gemini-3.1-flash-lite",
       systemInstruction: SYSTEM_PROMPT,
       generationConfig: { responseMimeType: "application/json" },
     });
@@ -137,10 +161,14 @@ export async function interpretPrompt(query: string): Promise<ParsedIntent> {
       themes: safeStrArr(raw.themes),
       keywords: safeStrArr(raw.keywords),
       referenceTitles: safeStrArr(raw.referenceTitles),
+      people: safeStrArr(raw.people),
+      strategies: safeStrArr(raw.strategies),
       mediaType: ["movie", "tv", "any"].includes(raw.mediaType) ? raw.mediaType : "any",
       quality: ["acclaimed", "underrated", "any", "bad"].includes(raw.quality) ? raw.quality : "any",
       description: typeof raw.description === "string" ? raw.description : query,
     };
+
+    if (intent.strategies.length === 0) intent.strategies.push("discover");
 
     await setJson(cacheKey, intent, 3600);
     console.log(`[Gemini] Parsed intent:`, JSON.stringify(intent));

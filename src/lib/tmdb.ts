@@ -35,6 +35,19 @@ export type TmdbMultiResult = {
   poster_path?: string | null;
 };
 
+export type TmdbPerson = {
+  id: number;
+  name: string;
+  profile_path: string | null;
+  known_for_department: string;
+};
+
+export type TmdbPersonCreditMovie = TmdbMovie & { character?: string; job?: string };
+export type TmdbPersonCreditTV = TmdbTV & { character?: string; job?: string };
+
+export type TmdbPersonCreditsMovie = { cast: TmdbPersonCreditMovie[]; crew: TmdbPersonCreditMovie[] };
+export type TmdbPersonCreditsTV = { cast: TmdbPersonCreditTV[]; crew: TmdbPersonCreditTV[] };
+
 /* ─── Genre maps ─── */
 
 export const MOVIE_GENRE_MAP: Record<string, number> = {
@@ -209,3 +222,107 @@ export async function fetchTVRecommendations(tvId: number): Promise<TmdbTV[]> {
   await setJson(key, results, 24 * 60 * 60);
   return results;
 }
+
+/* ─── Trending & Popular ─── */
+
+export async function fetchTrending(
+  mediaType: "movie" | "tv" | "all" = "all",
+  timeWindow: "day" | "week" = "week"
+): Promise<(TmdbMovie | TmdbTV)[]> {
+  const key = `tmdb:trending:${mediaType}:${timeWindow}:v1`;
+  const cached = await getJson<(TmdbMovie | TmdbTV)[]>(key);
+  if (cached) return cached;
+
+  const url = `${TMDB_BASE}/trending/${mediaType}/${timeWindow}?language=en-US` + tmdbAuthQuery();
+  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  if (!res.ok) return [];
+  const data = (await res.json()) as TmdbListResponse<TmdbMovie | TmdbTV>;
+  const results = data.results ?? [];
+  await setJson(key, results, 12 * 60 * 60);
+  return results;
+}
+
+export async function fetchPopular(mediaType: "movie" | "tv"): Promise<(TmdbMovie | TmdbTV)[]> {
+  const key = `tmdb:popular:${mediaType}:v1`;
+  const cached = await getJson<(TmdbMovie | TmdbTV)[]>(key);
+  if (cached) return cached;
+
+  const url = `${TMDB_BASE}/${mediaType}/popular?language=en-US&page=1` + tmdbAuthQuery();
+  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  if (!res.ok) return [];
+  const data = (await res.json()) as TmdbListResponse<TmdbMovie | TmdbTV>;
+  const results = data.results ?? [];
+  await setJson(key, results, 12 * 60 * 60);
+  return results;
+}
+
+export async function fetchTopRated(mediaType: "movie" | "tv"): Promise<(TmdbMovie | TmdbTV)[]> {
+  const key = `tmdb:toprated:${mediaType}:v1`;
+  const cached = await getJson<(TmdbMovie | TmdbTV)[]>(key);
+  if (cached) return cached;
+
+  const url = `${TMDB_BASE}/${mediaType}/top_rated?language=en-US&page=1` + tmdbAuthQuery();
+  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  if (!res.ok) return [];
+  const data = (await res.json()) as TmdbListResponse<TmdbMovie | TmdbTV>;
+  const results = data.results ?? [];
+  await setJson(key, results, 24 * 60 * 60);
+  return results;
+}
+
+export async function fetchUpcomingMovies(): Promise<TmdbMovie[]> {
+  const key = `tmdb:upcoming:movie:v1`;
+  const cached = await getJson<TmdbMovie[]>(key);
+  if (cached) return cached;
+
+  const url = `${TMDB_BASE}/movie/upcoming?language=en-US&page=1` + tmdbAuthQuery();
+  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  if (!res.ok) return [];
+  const data = (await res.json()) as TmdbListResponse<TmdbMovie>;
+  const results = data.results ?? [];
+  await setJson(key, results, 12 * 60 * 60);
+  return results;
+}
+
+/* ─── People ─── */
+
+export async function searchPerson(query: string): Promise<TmdbPerson[]> {
+  const key = `tmdb:search:person:${query.toLowerCase().slice(0, 100)}:v1`;
+  const cached = await getJson<TmdbPerson[]>(key);
+  if (cached) return cached;
+
+  const url = `${TMDB_BASE}/search/person?query=${encodeURIComponent(query)}&language=en-US&include_adult=false` + tmdbAuthQuery();
+  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  if (!res.ok) return [];
+  const data = (await res.json()) as TmdbListResponse<TmdbPerson>;
+  const results = data.results ?? [];
+  await setJson(key, results, 24 * 60 * 60);
+  return results;
+}
+
+export async function fetchPersonMovieCredits(personId: number): Promise<TmdbPersonCreditsMovie | null> {
+  const key = `tmdb:person:${personId}:movie_credits:v1`;
+  const cached = await getJson<TmdbPersonCreditsMovie>(key);
+  if (cached) return cached;
+
+  const url = `${TMDB_BASE}/person/${personId}/movie_credits?language=en-US` + tmdbAuthQuery();
+  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  if (!res.ok) return null;
+  const data = (await res.json()) as TmdbPersonCreditsMovie;
+  await setJson(key, data, 24 * 60 * 60);
+  return data;
+}
+
+export async function fetchPersonTVCredits(personId: number): Promise<TmdbPersonCreditsTV | null> {
+  const key = `tmdb:person:${personId}:tv_credits:v1`;
+  const cached = await getJson<TmdbPersonCreditsTV>(key);
+  if (cached) return cached;
+
+  const url = `${TMDB_BASE}/person/${personId}/tv_credits?language=en-US` + tmdbAuthQuery();
+  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  if (!res.ok) return null;
+  const data = (await res.json()) as TmdbPersonCreditsTV;
+  await setJson(key, data, 24 * 60 * 60);
+  return data;
+}
+

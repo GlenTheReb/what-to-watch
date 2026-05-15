@@ -5,6 +5,8 @@ import {
   fetchDiscoverCustom, fetchDiscoverTVCustom,
   searchMulti, searchKeywords,
   fetchMovieRecommendations, fetchTVRecommendations,
+  fetchTrending, fetchPopular, fetchTopRated, fetchUpcomingMovies,
+  searchPerson, fetchPersonMovieCredits, fetchPersonTVCredits,
   MOVIE_GENRE_MAP, TV_GENRE_MAP,
 } from "@/lib/tmdb";
 
@@ -21,7 +23,7 @@ type MediaItem = {
   vote_count: number;
   popularity: number;
   poster_path: string | null;
-  source: "recommendation" | "keyword_discover" | "genre_discover";
+  source: "recommendation" | "keyword_discover" | "genre_discover" | "trending" | "popular" | "top_rated" | "upcoming" | "person_credits";
 };
 
 type DeckCard = {
@@ -111,9 +113,11 @@ function scoreItem(
 ): number {
   let s = 0;
 
-  // Source bonus: TMDB recommendations are already relevance-vetted
+  // Source bonus
   if (item.source === "recommendation") s += 35;
+  else if (item.source === "person_credits") s += 40;
   else if (item.source === "keyword_discover") s += 15;
+  else if (item.source === "trending" || item.source === "upcoming") s += 10;
 
   // Baseline quality (modest — don't let rating dominate)
   s += item.vote_average * 1.5;
@@ -147,14 +151,18 @@ function scoreItem(
     s += item.vote_average * 3;
   }
 
-  // Theme + keyword matching in overview
+  // Theme + keyword matching in overview — this is the PRIMARY relevance signal
   const overview = item.overview.toLowerCase();
+  let thematicHits = 0;
   for (const theme of intent.themes) {
-    if (overview.includes(theme.toLowerCase())) s += 8;
+    if (overview.includes(theme.toLowerCase())) { s += 15; thematicHits++; }
   }
   for (const kw of intent.keywords) {
-    if (overview.includes(kw.toLowerCase())) s += 6;
+    if (overview.includes(kw.toLowerCase())) { s += 12; thematicHits++; }
   }
+  // Bonus for multiple thematic hits (compounds relevance)
+  if (thematicHits >= 3) s += 20;
+  else if (thematicHits >= 2) s += 10;
 
   // Mood nudges
   if (intent.mood !== "any") {
@@ -178,6 +186,16 @@ function generateReason(item: MediaItem, intent: ParsedIntent): string {
 
   if (item.source === "recommendation" && intent.referenceTitles[0]) {
     parts.push(`Because you like ${intent.referenceTitles[0]}`);
+  } else if (item.source === "person_credits" && intent.people[0]) {
+    parts.push(`Starring ${intent.people[0]}`);
+  } else if (item.source === "trending") {
+    parts.push("Trending now");
+  } else if (item.source === "upcoming") {
+    parts.push("Coming soon");
+  } else if (item.source === "popular") {
+    parts.push("Popular");
+  } else if (item.source === "top_rated") {
+    parts.push("Highly rated");
   } else if (intent.quality === "underrated") {
     parts.push("Hidden gem");
   } else if (intent.quality === "bad") {
@@ -227,128 +245,137 @@ export async function POST(request: Request) {
   const minVotes = intent.quality === "underrated" ? 50 : 100;
   const minAvg = intent.quality === "bad" ? undefined : 5.5;
 
-  /* ── 2. STRATEGY A: Recommendations from reference titles ── */
-  const recItems: MediaItem[] = [];
-  for (const title of intent.referenceTitles.slice(0, 2)) {
-    const searchResults = await searchMulti(title);
-    for (const sr of searchResults.slice(0, 1)) {
-      if (sr.media_type === "tv" && wantTV) {
-        const recs = await fetchTVRecommendations(sr.id);
-        recItems.push(...recs.map((m) => ({
-          id: m.id, title: m.name, year: yearFromDate(m.first_air_date),
-          mediaType: "tv" as const, overview: m.overview ?? "", genre_ids: m.genre_ids ?? [],
-          vote_average: m.vote_average ?? 0, vote_count: m.vote_count ?? 0,
-          popularity: m.popularity ?? 0, poster_path: m.poster_path,
-          source: "recommendation" as const,
-        })));
-      } else if (sr.media_type === "movie" && wantMovies) {
-        const recs = await fetchMovieRecommendations(sr.id);
-        recItems.push(...recs.map((m) => ({
-          id: m.id, title: m.title, year: yearFromDate(m.release_date),
-          mediaType: "movie" as const, overview: m.overview ?? "", genre_ids: m.genre_ids ?? [],
-          vote_average: m.vote_average ?? 0, vote_count: m.vote_count ?? 0,
-          popularity: m.popularity ?? 0, poster_path: m.poster_path,
-          source: "recommendation" as const,
-        })));
-      }
-    }
+  // When using recommendations with a specific media type, also run discover
+  // to find content of the correct type (e.g. "movies like Breaking Bad" needs
+  // discover for movies since Breaking Bad is a TV show on TMDB)
+  if (intent.strategies.includes("recommendations") && intent.mediaType !== "any"
+      && !intent.strategies.includes("discover") && intent.keywords.length > 0) {
+    console.log("[Deck] Adding discover supplement for cross-media recommendations");
+    intent.strategies.push("discover");
   }
 
-  /* ── 3. STRATEGY B: Keyword-based discover ── */
-  const keywordIds: number[] = [];
-  for (const kw of intent.keywords.slice(0, 5)) {
-    const results = await searchKeywords(kw);
-    if (results[0]) keywordIds.push(results[0].id);
-  }
-  const keywordCsv = [...new Set(keywordIds)].join("|"); // OR logic for keywords
-
-  /* ── 4. Build date ranges ── */
-  let dateRanges: { gte: string; lte: string }[];
-  if (intent.decades.length > 0) {
-    dateRanges = intent.decades.slice(0, 3).map((d) => {
-      const [gte, lte] = decadeToRange(d);
-      return { gte, lte };
-    });
-  } else {
-    const year = new Date().getFullYear();
-    dateRanges = [
-      { gte: "1970-01-01", lte: "1999-12-31" },
-      { gte: "2000-01-01", lte: `${year - 5}-12-31` },
-      { gte: `${year - 5}-01-01`, lte: `${year}-12-31` },
-    ];
-  }
-
-  /* ── 5. Build genre filters (AND logic = comma) ── */
-  const movieGenreIds = intent.genres.map((g) => MOVIE_GENRE_MAP[g]).filter(Boolean);
-  const movieGenreCsv = movieGenreIds.join(",");
-  const tvGenreIds = intent.genres.map((g) => TV_GENRE_MAP[g]).filter((id): id is number => typeof id === "number");
-  const tvGenreCsv = [...new Set(tvGenreIds)].join(",");
-
-  /* ── 6. Fetch discover candidates ── */
+  /* ── 2. Execute Routing Strategies ── */
   const fetches: Promise<MediaItem[]>[] = [];
 
-  for (const range of dateRanges) {
-    for (const page of [1, 2]) {
-      // Keyword+genre discover (most targeted)
-      if (keywordCsv && wantMovies) {
-        fetches.push(fetchDiscoverCustom({
-          page, sort_by: "vote_average.desc", vote_count_gte: minVotes,
-          vote_average_gte: minAvg, with_keywords: keywordCsv,
-          primary_release_date_gte: range.gte, primary_release_date_lte: range.lte,
-        }).then(items => items.map(m => ({
-          id: m.id, title: m.title, year: yearFromDate(m.release_date),
-          mediaType: "movie" as const, overview: m.overview ?? "", genre_ids: m.genre_ids ?? [],
-          vote_average: m.vote_average ?? 0, vote_count: m.vote_count ?? 0,
-          popularity: m.popularity ?? 0, poster_path: m.poster_path,
-          source: "keyword_discover" as const,
-        }))));
+  const mapMedia = (m: any, mt: "movie" | "tv", source: MediaItem["source"]): MediaItem => ({
+    id: m.id, title: m.title || m.name, year: yearFromDate(m.release_date || m.first_air_date),
+    mediaType: mt, overview: m.overview ?? "", genre_ids: m.genre_ids ?? [],
+    vote_average: m.vote_average ?? 0, vote_count: m.vote_count ?? 0,
+    popularity: m.popularity ?? 0, poster_path: m.poster_path, source,
+  });
+
+  for (const strategy of intent.strategies) {
+    if (strategy === "trending") {
+      const mt = intent.mediaType === "any" ? "all" : intent.mediaType;
+      fetches.push(fetchTrending(mt as any).then(items => 
+        items.map(m => mapMedia(m, "title" in m ? "movie" : "tv", "trending"))
+      ));
+    }
+    
+    if (strategy === "popular") {
+      if (wantMovies) fetches.push(fetchPopular("movie").then(items => items.map(m => mapMedia(m, "movie", "popular"))));
+      if (wantTV) fetches.push(fetchPopular("tv").then(items => items.map(m => mapMedia(m, "tv", "popular"))));
+    }
+    
+    if (strategy === "top_rated") {
+      if (wantMovies) fetches.push(fetchTopRated("movie").then(items => items.map(m => mapMedia(m, "movie", "top_rated"))));
+      if (wantTV) fetches.push(fetchTopRated("tv").then(items => items.map(m => mapMedia(m, "tv", "top_rated"))));
+    }
+    
+    if (strategy === "upcoming" && wantMovies) {
+      fetches.push(fetchUpcomingMovies().then(items => items.map(m => mapMedia(m, "movie", "upcoming"))));
+    }
+
+    if (strategy === "person_credits" && intent.people.length > 0) {
+      for (const person of intent.people.slice(0, 2)) {
+        fetches.push(searchPerson(person).then(async (results) => {
+          if (!results[0]) return [];
+          const pid = results[0].id;
+          const pItems: MediaItem[] = [];
+          if (wantMovies) {
+            const credits = await fetchPersonMovieCredits(pid);
+            if (credits) pItems.push(...credits.cast.map(m => mapMedia(m, "movie", "person_credits")));
+          }
+          if (wantTV) {
+            const credits = await fetchPersonTVCredits(pid);
+            if (credits) pItems.push(...credits.cast.map(m => mapMedia(m, "tv", "person_credits")));
+          }
+          return pItems;
+        }));
       }
-      if (keywordCsv && wantTV) {
-        fetches.push(fetchDiscoverTVCustom({
-          page, sort_by: "vote_average.desc", vote_count_gte: minVotes,
-          vote_average_gte: minAvg, with_keywords: keywordCsv,
-          first_air_date_gte: range.gte, first_air_date_lte: range.lte,
-        }).then(items => items.map(m => ({
-          id: m.id, title: m.name, year: yearFromDate(m.first_air_date),
-          mediaType: "tv" as const, overview: m.overview ?? "", genre_ids: m.genre_ids ?? [],
-          vote_average: m.vote_average ?? 0, vote_count: m.vote_count ?? 0,
-          popularity: m.popularity ?? 0, poster_path: m.poster_path,
-          source: "keyword_discover" as const,
-        }))));
+    }
+
+    if (strategy === "recommendations" && intent.referenceTitles.length > 0) {
+      for (const title of intent.referenceTitles.slice(0, 2)) {
+        fetches.push(searchMulti(title).then(async (results) => {
+          const rItems: MediaItem[] = [];
+          for (const sr of results.slice(0, 1)) {
+            // Always fetch recs from the reference title for thematic context
+            if (sr.media_type === "tv") {
+              const recs = await fetchTVRecommendations(sr.id);
+              rItems.push(...recs.map(m => mapMedia(m, "tv", "recommendation")));
+            } else if (sr.media_type === "movie") {
+              const recs = await fetchMovieRecommendations(sr.id);
+              rItems.push(...recs.map(m => mapMedia(m, "movie", "recommendation")));
+            }
+          }
+          return rItems;
+        }));
+      }
+    }
+
+    if (strategy === "discover") {
+      // Search ALL keywords + themes as TMDB keyword IDs for maximum coverage
+      const allSearchTerms = [...new Set([...intent.keywords, ...intent.themes])];
+      const keywordIds: number[] = [];
+      for (const kw of allSearchTerms.slice(0, 8)) {
+        const results = await searchKeywords(kw);
+        if (results[0]) keywordIds.push(results[0].id);
+      }
+      const keywordCsv = [...new Set(keywordIds)].join("|");
+
+      let dateRanges: { gte: string; lte: string }[];
+      if (intent.decades.length > 0) {
+        dateRanges = intent.decades.slice(0, 2).map((d) => {
+          const [gte, lte] = decadeToRange(d);
+          return { gte, lte };
+        });
+      } else {
+        const year = new Date().getFullYear();
+        dateRanges = [{ gte: "1970-01-01", lte: `${year}-12-31` }];
       }
 
-      // Genre-only discover (breadth fallback)
-      if (wantMovies && movieGenreCsv) {
-        fetches.push(fetchDiscoverCustom({
-          page, sort_by: "vote_average.desc", vote_count_gte: minVotes,
-          vote_average_gte: minAvg, with_genres: movieGenreCsv,
-          primary_release_date_gte: range.gte, primary_release_date_lte: range.lte,
-        }).then(items => items.map(m => ({
-          id: m.id, title: m.title, year: yearFromDate(m.release_date),
-          mediaType: "movie" as const, overview: m.overview ?? "", genre_ids: m.genre_ids ?? [],
-          vote_average: m.vote_average ?? 0, vote_count: m.vote_count ?? 0,
-          popularity: m.popularity ?? 0, poster_path: m.poster_path,
-          source: "genre_discover" as const,
-        }))));
-      }
-      if (wantTV && tvGenreCsv) {
-        fetches.push(fetchDiscoverTVCustom({
-          page, sort_by: "vote_average.desc", vote_count_gte: minVotes,
-          vote_average_gte: minAvg, with_genres: tvGenreCsv,
-          first_air_date_gte: range.gte, first_air_date_lte: range.lte,
-        }).then(items => items.map(m => ({
-          id: m.id, title: m.name, year: yearFromDate(m.first_air_date),
-          mediaType: "tv" as const, overview: m.overview ?? "", genre_ids: m.genre_ids ?? [],
-          vote_average: m.vote_average ?? 0, vote_count: m.vote_count ?? 0,
-          popularity: m.popularity ?? 0, poster_path: m.poster_path,
-          source: "genre_discover" as const,
-        }))));
+      const movieGenreCsv = intent.genres.map(g => MOVIE_GENRE_MAP[g]).filter(Boolean).join(",");
+      const tvGenreCsv = [...new Set(intent.genres.map(g => TV_GENRE_MAP[g]).filter(id => typeof id === "number"))].join(",");
+
+      for (const range of dateRanges) {
+        // Most targeted: keywords + genres combined
+        if (keywordCsv && movieGenreCsv && wantMovies) {
+          fetches.push(fetchDiscoverCustom({ page: 1, sort_by: "vote_average.desc", vote_count_gte: Math.min(minVotes, 50), vote_average_gte: minAvg, with_keywords: keywordCsv, with_genres: movieGenreCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "keyword_discover"))));
+        }
+        if (keywordCsv && tvGenreCsv && wantTV) {
+          fetches.push(fetchDiscoverTVCustom({ page: 1, sort_by: "vote_average.desc", vote_count_gte: Math.min(minVotes, 50), vote_average_gte: minAvg, with_keywords: keywordCsv, with_genres: tvGenreCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "keyword_discover"))));
+        }
+        // Keywords only (catches things outside the exact genre match)
+        if (keywordCsv && wantMovies) fetches.push(fetchDiscoverCustom({ page: 1, sort_by: "vote_average.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_keywords: keywordCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "keyword_discover"))));
+        if (keywordCsv && wantTV) fetches.push(fetchDiscoverTVCustom({ page: 1, sort_by: "vote_average.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_keywords: keywordCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "keyword_discover"))));
+        // Genre-only (broadest fallback)
+        if (wantMovies && movieGenreCsv) fetches.push(fetchDiscoverCustom({ page: 1, sort_by: "vote_average.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_genres: movieGenreCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "genre_discover"))));
+        if (wantTV && tvGenreCsv) fetches.push(fetchDiscoverTVCustom({ page: 1, sort_by: "vote_average.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_genres: tvGenreCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "genre_discover"))));
       }
     }
   }
 
-  const discoverResults = await Promise.all(fetches);
-  const allItems = [...recItems, ...discoverResults.flat()];
+  let discoverResults = await Promise.all(fetches);
+  let allItems = discoverResults.flat();
+  
+  // Fallback to discover if strategies yielded nothing
+  if (allItems.length === 0) {
+    console.log("[Deck] Strategies yielded 0 results, falling back to discover...");
+    const dateRange = { gte: "1970-01-01", lte: `${new Date().getFullYear()}-12-31` };
+    if (wantMovies) allItems.push(...(await fetchDiscoverCustom({ page: 1, sort_by: "popularity.desc", vote_count_gte: 100, primary_release_date_gte: dateRange.gte, primary_release_date_lte: dateRange.lte }).then(items => items.map(m => mapMedia(m, "movie", "genre_discover")))));
+    if (wantTV) allItems.push(...(await fetchDiscoverTVCustom({ page: 1, sort_by: "popularity.desc", vote_count_gte: 100, first_air_date_gte: dateRange.gte, first_air_date_lte: dateRange.lte }).then(items => items.map(m => mapMedia(m, "tv", "genre_discover")))));
+  }
 
   /* ── 7. De-dupe (prefer recommendation source) ── */
   const byKey = new Map<string, MediaItem>();
@@ -378,6 +405,15 @@ export async function POST(request: Request) {
     .filter((m) => m.vote_count >= Math.min(minVotes, 50))
     .filter((m) => m.popularity <= maxPopularity)
     .filter((m) => !seenIds.has(`${m.mediaType[0]}${m.id}`));
+
+  // Media type filter: if user asked for "movie" or "tv", filter out the other type
+  if (intent.mediaType !== "any") {
+    const mtFiltered = candidates.filter((m) => m.mediaType === intent.mediaType);
+    // Only apply if we still have enough results after filtering
+    if (mtFiltered.length >= 10) {
+      candidates = mtFiltered;
+    }
+  }
 
   // Hard genre filter (skip for recommendation-sourced items)
   if (intent.genres.length > 0) {
