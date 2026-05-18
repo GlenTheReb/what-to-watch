@@ -12,6 +12,7 @@ export type TmdbMovie = {
   vote_count: number;
   popularity: number;
   poster_path: string | null;
+  original_language?: string;
 };
 
 export type TmdbTV = {
@@ -24,6 +25,7 @@ export type TmdbTV = {
   vote_count: number;
   popularity: number;
   poster_path: string | null;
+  original_language?: string;
 };
 
 export type TmdbMultiResult = {
@@ -97,7 +99,7 @@ export async function fetchDiscoverCustom(params: {
   const key = `tmdb:discover:custom:sort=${sort_by}:votesGte=${vote_count_gte ?? "na"}` +
     `:avgGte=${vote_average_gte ?? "na"}:genres=${with_genres ?? "na"}` +
     `:kw=${with_keywords ?? "na"}:prdGte=${primary_release_date_gte ?? "na"}` +
-    `:prdLte=${primary_release_date_lte ?? "na"}:p${page}:v2`;
+    `:prdLte=${primary_release_date_lte ?? "na"}:p${page}:v3`;
 
   const cached = await getJson<TmdbMovie[]>(key);
   if (cached) { console.log(`[Cache HIT] ${key}`); return cached; }
@@ -139,7 +141,7 @@ export async function fetchDiscoverTVCustom(params: {
   const key = `tmdb:discover:tv:custom:sort=${sort_by}:votesGte=${vote_count_gte ?? "na"}` +
     `:avgGte=${vote_average_gte ?? "na"}:genres=${with_genres ?? "na"}` +
     `:kw=${with_keywords ?? "na"}:fadGte=${first_air_date_gte ?? "na"}` +
-    `:fadLte=${first_air_date_lte ?? "na"}:p${page}:v2`;
+    `:fadLte=${first_air_date_lte ?? "na"}:p${page}:v3`;
 
   const cached = await getJson<TmdbTV[]>(key);
   if (cached) { console.log(`[Cache HIT] ${key}`); return cached; }

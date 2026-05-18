@@ -33,7 +33,7 @@ const SYSTEM_PROMPT = `You are a movie/TV recommendation intent parser and pipel
 
 Return JSON with exactly these fields:
 {
-  "genres": string[] - from ONLY: "action", "adventure", "animation", "comedy", "crime", "documentary", "drama", "family", "fantasy", "history", "horror", "music", "mystery", "romance", "science_fiction", "thriller", "war", "western". Pick all that apply.
+  "genres": string[] - from ONLY: "action", "adventure", "animation", "comedy", "crime", "documentary", "drama", "family", "fantasy", "history", "horror", "music", "mystery", "romance", "science_fiction", "thriller", "war", "western". Pick all that apply. IMPORTANT: If the user asks for anime, cartoons, or animated content, you MUST include "animation" here. If they ask for docs, include "documentary".
   "decades": string[] - e.g. ["1990s", "2020s"]. Empty if not specified.
   "mood": string - one of: "lighthearted", "dark", "intense", "cerebral", "emotional", "adventurous", "relaxing", "nostalgic", "any".
   "themes": string[] - broad thematic tags like "time travel", "heist", "zombie". Empty if none.
@@ -115,7 +115,7 @@ function fallbackInterpret(query: string): ParsedIntent {
   if (/top rated|best of all time/.test(t)) intent.strategies.push("top_rated");
   if (/upcoming|in theaters|new release/.test(t)) intent.strategies.push("upcoming");
   if (intent.referenceTitles.length > 0) intent.strategies.push("recommendations");
-  
+
   if (intent.strategies.length === 0) intent.strategies.push("discover");
 
   return intent;
@@ -125,11 +125,14 @@ export async function interpretPrompt(query: string): Promise<ParsedIntent> {
   if (!query.trim()) return { ...DEFAULT_INTENT };
 
   const normalised = query.trim().toLowerCase().slice(0, 200);
-  const cacheKey = `gemini:intent:${normalised}:v4`;
+  const cacheKey = `gemini:intent:${normalised}:v5`;
 
   const cached = await getJson<ParsedIntent>(cacheKey);
   if (cached) {
     console.log(`[Gemini Cache HIT] ${cacheKey}`);
+    if (/\banime|shonen|isekai\b/i.test(query) && !cached.keywords.includes("anime")) {
+      cached.keywords.unshift("anime");
+    }
     return cached;
   }
 
@@ -167,6 +170,11 @@ export async function interpretPrompt(query: string): Promise<ParsedIntent> {
       quality: ["acclaimed", "underrated", "any", "bad"].includes(raw.quality) ? raw.quality : "any",
       description: typeof raw.description === "string" ? raw.description : query,
     };
+
+    // Hard override: Force the "anime" keyword so TMDB filters out western cartoons
+    if (/\banime|shonen|isekai\b/i.test(query) && !intent.keywords.includes("anime")) {
+      intent.keywords.unshift("anime");
+    }
 
     if (intent.strategies.length === 0) intent.strategies.push("discover");
 

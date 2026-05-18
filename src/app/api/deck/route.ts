@@ -23,7 +23,8 @@ type MediaItem = {
   vote_count: number;
   popularity: number;
   poster_path: string | null;
-  source: "recommendation" | "keyword_discover" | "genre_discover" | "trending" | "popular" | "top_rated" | "upcoming" | "person_credits";
+  source: "recommendation" | "keyword_discover" | "genre_discover" | "trending" | "popular" | "top_rated" | "upcoming" | "person_credits" | "targeted_discover";
+  original_language: string;
 };
 
 type DeckCard = {
@@ -113,10 +114,31 @@ function scoreItem(
 ): number {
   let s = 0;
 
+  // Theme + keyword matching in overview — this is the PRIMARY relevance signal
+  const overview = item.overview.toLowerCase();
+  let thematicHits = 0;
+  for (const theme of intent.themes) {
+    if (overview.includes(theme.toLowerCase())) { s += 15; thematicHits++; }
+  }
+  for (const kw of intent.keywords) {
+    if (overview.includes(kw.toLowerCase())) { s += 12; thematicHits++; }
+  }
+  // Bonus for multiple thematic hits (compounds relevance)
+  if (thematicHits >= 3) s += 20;
+  else if (thematicHits >= 2) s += 10;
+
   // Source bonus
-  if (item.source === "recommendation") s += 35;
+  if (item.source === "recommendation") {
+    if (thematicHits >= 2) {
+      s += 100; // Full trust: TMDB says it's similar AND it shares real thematic DNA
+      s += 20;
+    } else {
+      s += 35;  // Reduced trust: TMDB says it's similar but weak/no thematic overlap
+    }
+  }
   else if (item.source === "person_credits") s += 40;
-  else if (item.source === "keyword_discover") s += 15;
+  else if (item.source === "targeted_discover") s += 40;
+  else if (item.source === "keyword_discover") s += 25;
   else if (item.source === "trending" || item.source === "upcoming") s += 10;
 
   // Baseline quality (modest — don't let rating dominate)
@@ -125,13 +147,14 @@ function scoreItem(
 
   // Genre overlap
   const itemGenres = new Set(item.genre_ids);
-  const intentIds = genreIdsForMediaType(intent.genres, item.mediaType);
+  // Deduplicate intentIds so we don't double count combined TV genres (like action and adventure both mapping to 10759)
+  const intentIds = new Set(genreIdsForMediaType(intent.genres, item.mediaType));
   let genreOverlap = 0;
   for (const gid of intentIds) {
     if (itemGenres.has(gid)) genreOverlap++;
   }
-  s += genreOverlap * 20;
-  if (intentIds.length > 0 && genreOverlap === 0) s -= 15;
+  s += genreOverlap * 15;
+  if (intentIds.size > 0 && genreOverlap === 0) s -= 15;
 
   // Decade match
   if (intent.decades.length > 0 && item.year > 0) {
@@ -151,18 +174,7 @@ function scoreItem(
     s += item.vote_average * 3;
   }
 
-  // Theme + keyword matching in overview — this is the PRIMARY relevance signal
-  const overview = item.overview.toLowerCase();
-  let thematicHits = 0;
-  for (const theme of intent.themes) {
-    if (overview.includes(theme.toLowerCase())) { s += 15; thematicHits++; }
-  }
-  for (const kw of intent.keywords) {
-    if (overview.includes(kw.toLowerCase())) { s += 12; thematicHits++; }
-  }
-  // Bonus for multiple thematic hits (compounds relevance)
-  if (thematicHits >= 3) s += 20;
-  else if (thematicHits >= 2) s += 10;
+  // (Thematic matching moved up to calculate source bonus)
 
   // Mood nudges
   if (intent.mood !== "any") {
@@ -249,7 +261,7 @@ export async function POST(request: Request) {
   // to find content of the correct type (e.g. "movies like Breaking Bad" needs
   // discover for movies since Breaking Bad is a TV show on TMDB)
   if (intent.strategies.includes("recommendations") && intent.mediaType !== "any"
-      && !intent.strategies.includes("discover") && intent.keywords.length > 0) {
+    && !intent.strategies.includes("discover") && intent.keywords.length > 0) {
     console.log("[Deck] Adding discover supplement for cross-media recommendations");
     intent.strategies.push("discover");
   }
@@ -262,26 +274,30 @@ export async function POST(request: Request) {
     mediaType: mt, overview: m.overview ?? "", genre_ids: m.genre_ids ?? [],
     vote_average: m.vote_average ?? 0, vote_count: m.vote_count ?? 0,
     popularity: m.popularity ?? 0, poster_path: m.poster_path, source,
+    original_language: m.original_language ?? "en",
   });
+
+  const byKey = new Map<string, MediaItem>();
+  const refIds = new Set<string>();
 
   for (const strategy of intent.strategies) {
     if (strategy === "trending") {
       const mt = intent.mediaType === "any" ? "all" : intent.mediaType;
-      fetches.push(fetchTrending(mt as any).then(items => 
+      fetches.push(fetchTrending(mt as any).then(items =>
         items.map(m => mapMedia(m, "title" in m ? "movie" : "tv", "trending"))
       ));
     }
-    
+
     if (strategy === "popular") {
       if (wantMovies) fetches.push(fetchPopular("movie").then(items => items.map(m => mapMedia(m, "movie", "popular"))));
       if (wantTV) fetches.push(fetchPopular("tv").then(items => items.map(m => mapMedia(m, "tv", "popular"))));
     }
-    
+
     if (strategy === "top_rated") {
       if (wantMovies) fetches.push(fetchTopRated("movie").then(items => items.map(m => mapMedia(m, "movie", "top_rated"))));
       if (wantTV) fetches.push(fetchTopRated("tv").then(items => items.map(m => mapMedia(m, "tv", "top_rated"))));
     }
-    
+
     if (strategy === "upcoming" && wantMovies) {
       fetches.push(fetchUpcomingMovies().then(items => items.map(m => mapMedia(m, "movie", "upcoming"))));
     }
@@ -310,6 +326,7 @@ export async function POST(request: Request) {
         fetches.push(searchMulti(title).then(async (results) => {
           const rItems: MediaItem[] = [];
           for (const sr of results.slice(0, 1)) {
+            refIds.add(`${sr.media_type === "tv" ? "t" : "m"}${sr.id}`);
             // Always fetch recs from the reference title for thematic context
             if (sr.media_type === "tv") {
               const recs = await fetchTVRecommendations(sr.id);
@@ -351,35 +368,38 @@ export async function POST(request: Request) {
       for (const range of dateRanges) {
         // Most targeted: keywords + genres combined
         if (keywordCsv && movieGenreCsv && wantMovies) {
-          fetches.push(fetchDiscoverCustom({ page: 1, sort_by: "vote_average.desc", vote_count_gte: Math.min(minVotes, 50), vote_average_gte: minAvg, with_keywords: keywordCsv, with_genres: movieGenreCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "keyword_discover"))));
+          fetches.push(fetchDiscoverCustom({ page: 1, sort_by: "vote_count.desc", vote_count_gte: Math.min(minVotes, 50), vote_average_gte: minAvg, with_keywords: keywordCsv, with_genres: movieGenreCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "targeted_discover"))));
         }
         if (keywordCsv && tvGenreCsv && wantTV) {
-          fetches.push(fetchDiscoverTVCustom({ page: 1, sort_by: "vote_average.desc", vote_count_gte: Math.min(minVotes, 50), vote_average_gte: minAvg, with_keywords: keywordCsv, with_genres: tvGenreCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "keyword_discover"))));
+          fetches.push(fetchDiscoverTVCustom({ page: 1, sort_by: "vote_count.desc", vote_count_gte: Math.min(minVotes, 50), vote_average_gte: minAvg, with_keywords: keywordCsv, with_genres: tvGenreCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "targeted_discover"))));
         }
         // Keywords only (catches things outside the exact genre match)
-        if (keywordCsv && wantMovies) fetches.push(fetchDiscoverCustom({ page: 1, sort_by: "vote_average.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_keywords: keywordCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "keyword_discover"))));
-        if (keywordCsv && wantTV) fetches.push(fetchDiscoverTVCustom({ page: 1, sort_by: "vote_average.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_keywords: keywordCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "keyword_discover"))));
-        // Genre-only (broadest fallback)
-        if (wantMovies && movieGenreCsv) fetches.push(fetchDiscoverCustom({ page: 1, sort_by: "vote_average.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_genres: movieGenreCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "genre_discover"))));
-        if (wantTV && tvGenreCsv) fetches.push(fetchDiscoverTVCustom({ page: 1, sort_by: "vote_average.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_genres: tvGenreCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "genre_discover"))));
+        if (keywordCsv && wantMovies) fetches.push(fetchDiscoverCustom({ page: 1, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_keywords: keywordCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "keyword_discover"))));
+        if (keywordCsv && wantTV) fetches.push(fetchDiscoverTVCustom({ page: 1, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_keywords: keywordCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "keyword_discover"))));
+        
+        // Genre-only (broadest fallback for variety pool — low score, never outranks recommendations)
+        if (wantMovies && movieGenreCsv) fetches.push(fetchDiscoverCustom({ page: 1, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_genres: movieGenreCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "genre_discover"))));
+        if (wantTV && tvGenreCsv) fetches.push(fetchDiscoverTVCustom({ page: 1, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_genres: tvGenreCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "genre_discover"))));
       }
     }
   }
 
-  let discoverResults = await Promise.all(fetches);
-  let allItems = discoverResults.flat();
+  const fetchResults = await Promise.all(fetches);
+  let candidates = fetchResults.flat();
   
+  // Filter out the reference titles themselves (e.g. don't recommend Game of Thrones for "shows like Game of Thrones")
+  candidates = candidates.filter(m => !refIds.has(`${m.mediaType[0]}${m.id}`));
+
   // Fallback to discover if strategies yielded nothing
-  if (allItems.length === 0) {
+  if (candidates.length === 0) {
     console.log("[Deck] Strategies yielded 0 results, falling back to discover...");
     const dateRange = { gte: "1970-01-01", lte: `${new Date().getFullYear()}-12-31` };
-    if (wantMovies) allItems.push(...(await fetchDiscoverCustom({ page: 1, sort_by: "popularity.desc", vote_count_gte: 100, primary_release_date_gte: dateRange.gte, primary_release_date_lte: dateRange.lte }).then(items => items.map(m => mapMedia(m, "movie", "genre_discover")))));
-    if (wantTV) allItems.push(...(await fetchDiscoverTVCustom({ page: 1, sort_by: "popularity.desc", vote_count_gte: 100, first_air_date_gte: dateRange.gte, first_air_date_lte: dateRange.lte }).then(items => items.map(m => mapMedia(m, "tv", "genre_discover")))));
+    if (wantMovies) candidates.push(...(await fetchDiscoverCustom({ page: 1, sort_by: "popularity.desc", vote_count_gte: 100, primary_release_date_gte: dateRange.gte, primary_release_date_lte: dateRange.lte }).then(items => items.map(m => mapMedia(m, "movie", "genre_discover")))));
+    if (wantTV) candidates.push(...(await fetchDiscoverTVCustom({ page: 1, sort_by: "popularity.desc", vote_count_gte: 100, first_air_date_gte: dateRange.gte, first_air_date_lte: dateRange.lte }).then(items => items.map(m => mapMedia(m, "tv", "genre_discover")))));
   }
 
   /* ── 7. De-dupe (prefer recommendation source) ── */
-  const byKey = new Map<string, MediaItem>();
-  for (const item of allItems) {
+  for (const item of candidates) {
     const key = `${item.mediaType[0]}${item.id}`;
     const existing = byKey.get(key);
     if (!existing || item.source === "recommendation") {
@@ -400,11 +420,17 @@ export async function POST(request: Request) {
 
   /* ── 9. Filter ── */
   const maxPopularity = intent.quality === "underrated" ? 60 : Infinity;
-  let candidates = Array.from(byKey.values())
+  candidates = Array.from(byKey.values())
     .filter((m) => m.poster_path)
     .filter((m) => m.vote_count >= Math.min(minVotes, 50))
     .filter((m) => m.popularity <= maxPopularity)
     .filter((m) => !seenIds.has(`${m.mediaType[0]}${m.id}`));
+
+  // Anime strict filter
+  if (intent.keywords.includes("anime") || intent.description.toLowerCase().includes("anime")) {
+    const animeFiltered = candidates.filter((m) => m.original_language === "ja" && m.genre_ids.includes(16));
+    if (animeFiltered.length > 0) candidates = animeFiltered;
+  }
 
   // Media type filter: if user asked for "movie" or "tv", filter out the other type
   if (intent.mediaType !== "any") {
@@ -415,31 +441,52 @@ export async function POST(request: Request) {
     }
   }
 
-  // Hard genre filter (skip for recommendation-sourced items)
+  // Hard genre filter
   if (intent.genres.length > 0) {
     const genreFiltered = candidates.filter((m) => {
-      if (m.source === "recommendation") return true; // trust TMDB recs
       const ids = genreIdsForMediaType(intent.genres, m.mediaType);
+
+      // If the intent strictly requires animation (16) or documentary (99), 
+      // the candidate MUST have it, even if it matches other requested genres like Action.
+      if (ids.includes(16) && !m.genre_ids.includes(16)) return false;
+      if (ids.includes(99) && !m.genre_ids.includes(99)) return false;
+      
+      // Conversely, if the intent DOES NOT ask for animation, filter out animation to preserve live-action queries.
+      if (!ids.includes(16) && m.genre_ids.includes(16)) return false;
+
       return ids.some((gid) => m.genre_ids.includes(gid));
     });
-    if (genreFiltered.length >= 15) candidates = genreFiltered;
+
+    // If we found ANY items matching the requested genres, strictly use them.
+    // Quality over quantity: a deck of 4 perfect cards is better than 10 wrong ones.
+    if (genreFiltered.length > 0) {
+      candidates = genreFiltered;
+    }
   }
 
   /* ── 10. Score, rank, shuffle ── */
   const seed = hashStringToSeed(`${sessionId}:${new Date().toDateString()}:${reroll}`);
   const rand = mulberry32(seed);
 
-  const ranked = candidates
+  const scored = candidates
     .map((m) => ({ m, s: scoreItem(m, intent, likeCounts, passCounts) }))
-    .sort((a, b) => b.s - a.s)
-    .map((x) => x.m);
+    .sort((a, b) => b.s - a.s);
 
-  const topBucket = ranked.slice(0, 60);
-  const midBucket = ranked.slice(60, 220);
-  shuffleInPlace(topBucket, rand);
-  shuffleInPlace(midBucket, rand);
+  // Debug: show top 20 candidates with scores and sources
+  console.log(`[Deck] Top 20 scored candidates:`);
+  for (const { m, s } of scored.slice(0, 20)) {
+    console.log(`  ${s.toFixed(1).padStart(6)} | ${m.source.padEnd(20)} | ${m.title} (${m.year})`);
+  }
 
-  let picked = [...topBucket.slice(0, 7), ...midBucket.slice(0, 3)];
+  const ranked = scored.map((x) => x.m);
+
+  // Pin the top 5 highest-scoring items — they always appear.
+  // Shuffle the next 35 for variety and pick 5 more.
+  const pinned = ranked.slice(0, 5);
+  const varietyPool = ranked.slice(5, 40);
+  shuffleInPlace(varietyPool, rand);
+
+  let picked = [...pinned, ...varietyPool.slice(0, 5)];
   if (picked.length < 10) {
     const seen = new Set(picked.map((m) => `${m.mediaType[0]}${m.id}`));
     for (const m of ranked) {
@@ -459,6 +506,8 @@ export async function POST(request: Request) {
     reason: generateReason(m, intent),
     posterPath: m.poster_path,
   }));
+
+  console.log(`[Deck] Generated Cards for "${q}":\n`, cards.map((c, i) => `  ${i + 1}. ${c.title} (${c.year})`).join("\n"));
 
   const response = NextResponse.json({ interpretedAs: intent.description, cards });
   if (!cookieStore.get("sessionId")?.value) {
