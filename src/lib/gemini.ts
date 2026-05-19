@@ -186,3 +186,98 @@ export async function interpretPrompt(query: string): Promise<ParsedIntent> {
     return fallbackInterpret(query);
   }
 }
+
+/* ─── "Why X?" reason generation ─── */
+
+type WhyItem = {
+  title: string;
+  year: number;
+  overview: string;
+  mediaType: "movie" | "tv";
+  source: string;
+  cast: string[];
+  director: string | null;
+};
+
+export async function generateWhyReasons(
+  userQuery: string,
+  intent: ParsedIntent,
+  items: WhyItem[],
+): Promise<string[]> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || items.length === 0) return items.map(() => "");
+
+  // Build rich intent context
+  const intentContext = [
+    `Genres: ${intent.genres.join(", ") || "none"}`,
+    `Mood: ${intent.mood}`,
+    `Themes: ${intent.themes.join(", ") || "none"}`,
+    `Keywords: ${intent.keywords.join(", ") || "none"}`,
+    intent.referenceTitles.length > 0 ? `Reference titles: ${intent.referenceTitles.join(", ")}` : null,
+    intent.people.length > 0 ? `People: ${intent.people.join(", ")}` : null,
+    intent.decades.length > 0 ? `Decades: ${intent.decades.join(", ")}` : null,
+    `Quality: ${intent.quality}`,
+  ].filter(Boolean).join("\n");
+
+  // Build per-title listing with cast/crew
+  const listing = items
+    .map((item, i) => {
+      const parts = [
+        `${i + 1}. "${item.title}" (${item.year}, ${item.mediaType})`,
+        `   Source: ${item.source}`,
+        `   Overview: ${item.overview.slice(0, 300)}`,
+      ];
+      if (item.cast.length > 0) parts.push(`   Cast: ${item.cast.join(", ")}`);
+      if (item.director) parts.push(`   Director: ${item.director}`);
+      return parts.join("\n");
+    })
+    .join("\n\n");
+
+  const prompt = `You are a movie/TV recommendation assistant. The user asked: "${userQuery}"
+
+Interpreted as: ${intent.description}
+
+User's intent breakdown:
+${intentContext}
+
+For each recommended title below, write a short, compelling reason explaining WHY this specific title is a great match for what the user is looking for.
+
+Rules:
+- Be specific: reference plot elements, themes, tone, cast, director, or connections to the user's request.
+- If there's a shared actor or director with a reference title the user mentioned, call that out.
+- If the source says "recommendation" and there are reference titles, explain the connection.
+- If the source says "person_credits", mention the specific actor/director by name.
+- Use the overview and cast data to make each reason unique and specific — avoid generic descriptions.
+- Keep each reason between 8 and 20 words. One sentence only.
+- Don't start with the title name. Don't use generic filler like "A great pick" or "You'll love this".
+- Write in a casual, confident tone — like a friend recommending something.
+
+Titles:
+${listing}
+
+Return a JSON array of exactly ${items.length} strings, one per title, in the same order.`;
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: "gemini-3.1-flash-lite",
+      generationConfig: { responseMimeType: "application/json" },
+    });
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    const parsed = JSON.parse(text);
+
+    if (Array.isArray(parsed) && parsed.length === items.length) {
+      console.log(`[Gemini] Generated ${parsed.length} "Why?" reasons`);
+      return parsed.map((r: unknown) => (typeof r === "string" ? r : ""));
+    }
+
+    console.warn("[Gemini] Why reasons: unexpected shape, falling back");
+    return items.map(() => "");
+  } catch (err) {
+    console.error("[Gemini] Why reasons error:", err);
+    return items.map(() => "");
+  }
+}
+

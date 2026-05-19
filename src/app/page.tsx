@@ -8,6 +8,7 @@ type DeckCard = {
   year: number;
   kind: "movie" | "tv";
   reason: string;
+  voteAverage: number;
   posterPath: string | null;
 };
 
@@ -185,14 +186,24 @@ export default function Home() {
               </span>
             </div>
 
-            {/* Title */}
+            {/* Title + rating */}
             <div className="text-lg font-semibold">
               {current.title}{" "}
               <span className="text-gray-400">({current.year})</span>
             </div>
+            {current.voteAverage > 0 && (
+              <div className="text-sm text-yellow-400">
+                {current.voteAverage.toFixed(1)}★
+              </div>
+            )}
 
-            {/* Reason */}
-            <div className="text-sm text-gray-400">{current.reason}</div>
+            {/* Why this? */}
+            <div className="mt-1">
+              <span className="text-xs font-semibold text-emerald-400">
+                Why {current.title}?
+              </span>
+              <p className="text-sm text-gray-300 mt-0.5">{current.reason}</p>
+            </div>
 
             {/* Buttons */}
             <div className="mt-4 flex gap-3">

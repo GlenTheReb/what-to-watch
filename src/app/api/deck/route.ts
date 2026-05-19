@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { interpretPrompt, type ParsedIntent } from "@/lib/gemini";
+import { interpretPrompt, generateWhyReasons, type ParsedIntent } from "@/lib/gemini";
 import {
   fetchDiscoverCustom, fetchDiscoverTVCustom,
   searchMulti, searchKeywords,
   fetchMovieRecommendations, fetchTVRecommendations,
   fetchTrending, fetchPopular, fetchTopRated, fetchUpcomingMovies,
   searchPerson, fetchPersonMovieCredits, fetchPersonTVCredits,
+  fetchMovieCredits, fetchTVCredits,
   MOVIE_GENRE_MAP, TV_GENRE_MAP,
 } from "@/lib/tmdb";
 
@@ -33,6 +34,7 @@ type DeckCard = {
   year: number;
   kind: "movie" | "tv";
   reason: string;
+  voteAverage: number;
   posterPath: string | null;
 };
 
@@ -497,13 +499,37 @@ export async function POST(request: Request) {
   }
   picked = picked.slice(0, 10);
 
-  /* ── 11. Build cards ── */
-  const cards: DeckCard[] = picked.map((m) => ({
+  /* ── 11. Fetch credits for final picks & generate "Why X?" reasons via Gemini ── */
+  const creditsResults = await Promise.all(
+    picked.map((m) =>
+      m.mediaType === "movie"
+        ? fetchMovieCredits(m.id)
+        : fetchTVCredits(m.id),
+    ),
+  );
+
+  const aiReasons = await generateWhyReasons(
+    q,
+    intent,
+    picked.map((m, i) => ({
+      title: m.title,
+      year: m.year,
+      overview: m.overview,
+      mediaType: m.mediaType,
+      source: m.source,
+      cast: creditsResults[i].cast,
+      director: creditsResults[i].director,
+    })),
+  );
+
+  /* ── 12. Build cards ── */
+  const cards: DeckCard[] = picked.map((m, i) => ({
     id: `${m.mediaType[0]}${m.id}`,
     title: m.title,
     year: m.year,
     kind: m.mediaType,
-    reason: generateReason(m, intent),
+    reason: aiReasons[i] || generateReason(m, intent),
+    voteAverage: m.vote_average,
     posterPath: m.poster_path,
   }));
 
