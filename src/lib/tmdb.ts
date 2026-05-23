@@ -322,39 +322,61 @@ export async function searchPerson(query: string): Promise<TmdbPerson[]> {
 export type TitleCredits = {
   cast: string[];   // top actor names
   director: string | null;
+  parentalRating: string | null;
+  watchProviders: any;
 };
 
 export async function fetchMovieCredits(movieId: number): Promise<TitleCredits> {
-  const key = `tmdb:movie:${movieId}:credits:v1`;
+  const key = `tmdb:movie:${movieId}:credits:v3`;
   const cached = await getJson<TitleCredits>(key);
   if (cached) return cached;
 
-  const url = `${TMDB_BASE}/movie/${movieId}/credits?language=en-US` + tmdbAuthQuery();
+  const url = `${TMDB_BASE}/movie/${movieId}?append_to_response=credits,release_dates,watch/providers&language=en-US` + tmdbAuthQuery();
   const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
-  if (!res.ok) return { cast: [], director: null };
+  if (!res.ok) return { cast: [], director: null, parentalRating: null, watchProviders: null };
   const data = await res.json();
-  const cast = (data.cast ?? []).slice(0, 5).map((c: any) => c.name as string);
-  const director = (data.crew ?? []).find((c: any) => c.job === "Director")?.name ?? null;
-  const result: TitleCredits = { cast, director };
+  const credits = data.credits ?? {};
+  const cast = (credits.cast ?? []).slice(0, 5).map((c: any) => c.name as string);
+  const director = (credits.crew ?? []).find((c: any) => c.job === "Director")?.name ?? null;
+  
+  let parentalRating: string | null = null;
+  const usRelease = (data.release_dates?.results ?? []).find((r: any) => r.iso_3166_1 === "US");
+  if (usRelease) {
+    const cert = usRelease.release_dates?.find((r: any) => r.certification)?.certification;
+    if (cert) parentalRating = cert;
+  }
+
+  const watchProviders = data["watch/providers"]?.results ?? null;
+
+  const result: TitleCredits = { cast, director, parentalRating, watchProviders };
   await setJson(key, result, 24 * 60 * 60);
   return result;
 }
 
 export async function fetchTVCredits(tvId: number): Promise<TitleCredits> {
-  const key = `tmdb:tv:${tvId}:credits:v1`;
+  const key = `tmdb:tv:${tvId}:credits:v3`;
   const cached = await getJson<TitleCredits>(key);
   if (cached) return cached;
 
-  const url = `${TMDB_BASE}/tv/${tvId}/credits?language=en-US` + tmdbAuthQuery();
+  const url = `${TMDB_BASE}/tv/${tvId}?append_to_response=credits,content_ratings,watch/providers&language=en-US` + tmdbAuthQuery();
   const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
-  if (!res.ok) return { cast: [], director: null };
+  if (!res.ok) return { cast: [], director: null, parentalRating: null, watchProviders: null };
   const data = await res.json();
-  const cast = (data.cast ?? []).slice(0, 5).map((c: any) => c.name as string);
-  // TV uses "created by" but credits API has crew; grab first EP or Director
-  const director = (data.crew ?? []).find((c: any) =>
+  const credits = data.credits ?? {};
+  const cast = (credits.cast ?? []).slice(0, 5).map((c: any) => c.name as string);
+  const director = (credits.crew ?? []).find((c: any) =>
     c.job === "Director" || c.job === "Executive Producer"
   )?.name ?? null;
-  const result: TitleCredits = { cast, director };
+
+  let parentalRating: string | null = null;
+  const usRating = (data.content_ratings?.results ?? []).find((r: any) => r.iso_3166_1 === "US");
+  if (usRating && usRating.rating) {
+    parentalRating = usRating.rating;
+  }
+
+  const watchProviders = data["watch/providers"]?.results ?? null;
+
+  const result: TitleCredits = { cast, director, parentalRating, watchProviders };
   await setJson(key, result, 24 * 60 * 60);
   return result;
 }

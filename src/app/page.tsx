@@ -13,6 +13,9 @@ type DeckCard = {
   genres: string[];
   director: string | null;
   cast: string[];
+  parentalRating?: string | null;
+  watchProviders?: { provider_name: string; logo_path: string }[];
+  watchLink?: string;
 };
 
 const LS_LIKES = "wtw:likes";
@@ -45,12 +48,19 @@ export default function Home() {
   const [reroll, setReroll] = useState(0);
   const [likes, setLikes] = useState<Set<string>>(new Set());
   const [passes, setPasses] = useState<Set<string>>(new Set());
+  const [countryCode, setCountryCode] = useState("US");
 
   const current = cards[index];
 
   useEffect(() => {
     setLikes(loadSet(LS_LIKES));
     setPasses(loadSet(LS_PASSES));
+    fetch("https://ipapi.co/country/")
+      .then(res => res.text())
+      .then(text => {
+        if (text && text.length === 2) setCountryCode(text.toUpperCase());
+      })
+      .catch(() => {});
   }, []);
 
   async function getPicks() {
@@ -67,6 +77,7 @@ export default function Home() {
         body: JSON.stringify({
           q: query,
           reroll: 0,
+          countryCode,
           likes: Array.from(likes).slice(-200),
           passes: Array.from(passes).slice(-200),
         }),
@@ -124,6 +135,7 @@ export default function Home() {
         body: JSON.stringify({
           q: query,
           reroll: next,
+          countryCode,
           likes: Array.from(likes).slice(-200),
           passes: Array.from(passes).slice(-200),
         }),
@@ -190,9 +202,16 @@ export default function Home() {
               <span className="text-xs text-gray-400">
                 Card {index + 1} / {cards.length}
               </span>
-              <span className="text-xs text-gray-400">
-                {current.kind.toUpperCase()}
-              </span>
+              <div className="flex items-center gap-2">
+                {current.parentalRating && (
+                  <span className="text-xs px-1.5 py-0.5 rounded border border-gray-600 text-gray-400 font-bold uppercase">
+                    {current.parentalRating}
+                  </span>
+                )}
+                <span className="text-xs text-gray-400">
+                  {current.kind.toUpperCase()}
+                </span>
+              </div>
             </div>
 
             {/* Title + rating */}
@@ -245,6 +264,42 @@ export default function Home() {
               </span>
               <p className="text-sm text-gray-300 mt-0.5">{current.reason}</p>
             </div>
+
+            {/* Watch Options */}
+            {current.watchLink && (
+              <div className="mt-3 pt-3 border-t border-gray-800">
+                <span className="text-xs font-semibold text-gray-400 block mb-2">Where to watch</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {current.watchProviders && current.watchProviders.length > 0 ? (
+                    current.watchProviders.slice(0, 4).map((p) => (
+                      <a
+                        key={p.provider_name}
+                        href={current.watchLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="transition-transform hover:scale-110"
+                        title={`Watch on ${p.provider_name}`}
+                      >
+                        <img
+                          src={`https://image.tmdb.org/t/p/original${p.logo_path}`}
+                          alt={p.provider_name}
+                          className="w-8 h-8 rounded shadow-sm"
+                        />
+                      </a>
+                    ))
+                  ) : (
+                    <a
+                      href={current.watchLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm text-blue-400 hover:text-blue-300 underline"
+                    >
+                      Find where to rent or buy
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Buttons */}
             <div className="mt-4 flex gap-3">

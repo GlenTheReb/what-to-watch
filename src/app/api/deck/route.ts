@@ -40,6 +40,9 @@ type DeckCard = {
   genres: string[];
   director: string | null;
   cast: string[];
+  parentalRating: string | null;
+  watchProviders?: { provider_name: string; logo_path: string }[];
+  watchLink?: string;
 };
 
 /* ─── Utilities ─── */
@@ -245,6 +248,7 @@ export async function POST(request: Request) {
 
   const q = (getStringField(body, "q") ?? "").trim();
   const reroll = getNumberField(body, "reroll") ?? 0;
+  const countryCode = getStringField(body, "countryCode") ?? "US";
 
   const likes = typeof body === "object" && body !== null && "likes" in body &&
     Array.isArray((body as Record<string, unknown>).likes)
@@ -375,7 +379,11 @@ export async function POST(request: Request) {
       const keywordCsv = [...new Set(keywordIds)].join("|");
 
       let dateRanges: { gte: string; lte: string }[];
-      if (intent.decades.length > 0) {
+      if (intent.yearGte || intent.yearLte) {
+        const gte = intent.yearGte ? `${intent.yearGte}-01-01` : "1970-01-01";
+        const lte = intent.yearLte ? `${intent.yearLte}-12-31` : `${new Date().getFullYear() + 5}-12-31`;
+        dateRanges = [{ gte, lte }];
+      } else if (intent.decades.length > 0) {
         dateRanges = intent.decades.slice(0, 2).map((d) => {
           const [gte, lte] = decadeToRange(d);
           return { gte, lte };
@@ -458,7 +466,14 @@ export async function POST(request: Request) {
     .filter((m) => m.poster_path)
     .filter((m) => m.vote_count >= Math.min(minVotes, 50))
     .filter((m) => m.popularity <= maxPopularity)
-    .filter((m) => !seenIds.has(`${m.mediaType[0]}${m.id}`));
+    .filter((m) => !seenIds.has(`${m.mediaType[0]}${m.id}`))
+    .filter((m) => {
+      if (m.year > 0) {
+        if (intent.yearGte && m.year < intent.yearGte) return false;
+        if (intent.yearLte && m.year > intent.yearLte) return false;
+      }
+      return true;
+    });
 
   // Anime strict filter
   if (intent.keywords.includes("anime") || intent.description.toLowerCase().includes("anime")) {
@@ -506,7 +521,9 @@ export async function POST(request: Request) {
     const tvGenreCsv = [...new Set(intent.genres.map(g => TV_GENRE_MAP[g]).filter(id => typeof id === "number"))].join(",");
 
     const year = new Date().getFullYear();
-    const dateRanges = intent.decades.length > 0
+    const dateRanges = (intent.yearGte || intent.yearLte)
+      ? [{ gte: intent.yearGte ? `${intent.yearGte}-01-01` : "1970-01-01", lte: intent.yearLte ? `${intent.yearLte}-12-31` : `${year + 5}-12-31` }]
+      : intent.decades.length > 0
       ? intent.decades.slice(0, 2).map(d => { const [gte, lte] = decadeToRange(d); return { gte, lte }; })
       : [{ gte: "1970-01-01", lte: `${year}-12-31` }];
 
@@ -602,6 +619,12 @@ export async function POST(request: Request) {
   const cards: DeckCard[] = picked.map((m, i) => {
     const nameMap = genreNameMap(m.mediaType);
     const genres = [...new Set(m.genre_ids.map(id => nameMap[id]).filter(Boolean))];
+    
+    const allProviders = creditsResults[i].watchProviders ?? {};
+    const localProviders = allProviders[countryCode] ?? allProviders["US"] ?? {};
+    const streaming = localProviders.flatrate ?? [];
+    const watchLink = localProviders.link ?? null;
+
     return {
       id: `${m.mediaType[0]}${m.id}`,
       title: m.title,
@@ -613,6 +636,9 @@ export async function POST(request: Request) {
       genres,
       director: creditsResults[i].director,
       cast: creditsResults[i].cast,
+      parentalRating: creditsResults[i].parentalRating,
+      watchProviders: streaming,
+      watchLink,
     };
   });
 

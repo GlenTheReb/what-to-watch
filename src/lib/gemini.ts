@@ -4,6 +4,8 @@ import { getJson, setJson } from "./cache";
 export type ParsedIntent = {
   genres: string[];
   decades: string[];
+  yearGte?: number;
+  yearLte?: number;
   mood: string;
   themes: string[];
   keywords: string[];
@@ -35,6 +37,8 @@ Return JSON with exactly these fields:
 {
   "genres": string[] - from ONLY: "action", "adventure", "animation", "comedy", "crime", "documentary", "drama", "family", "fantasy", "history", "horror", "music", "mystery", "romance", "science_fiction", "thriller", "war", "western". Pick all that apply. IMPORTANT: If the user asks for anime, cartoons, or animated content, you MUST include "animation" here. If they ask for docs, include "documentary".
   "decades": string[] - e.g. ["1990s", "2020s"]. Empty if not specified.
+  "yearGte": number - Greater than or equal to year (e.g. for "after 2015" output 2016). Omit if not specified.
+  "yearLte": number - Less than or equal to year (e.g. for "before 2000" output 1999). Omit if not specified.
   "mood": string - one of: "lighthearted", "dark", "intense", "cerebral", "emotional", "adventurous", "relaxing", "nostalgic", "any".
   "themes": string[] - broad thematic tags like "time travel", "heist", "zombie". Empty if none.
   "keywords": string[] - TMDB-style keyword tags. These MUST be concrete, searchable plot elements that would appear on a movie's TMDB page. Think: what specific settings, occupations, substances, activities, or plot devices define this content? Generate 5-10 keywords. AVOID vague words like "consequences", "power struggle", "transformation", "double life". PREFER concrete words like "methamphetamine", "drug cartel", "chemistry teacher", "desert", "money laundering", "DEA", "cancer diagnosis".
@@ -55,7 +59,7 @@ Return JSON with exactly these fields:
 
 Examples:
 - "funny movies from the 90s" → {"genres":["comedy"],"decades":["1990s"],"mood":"lighthearted","themes":[],"keywords":["slapstick","buddy comedy","parody"],"referenceTitles":[],"people":[],"strategies":["discover"],"mediaType":"movie","quality":"any","description":"90s comedies"}
-- "movies starring tom hanks" → {"genres":[],"decades":[],"mood":"any","themes":[],"keywords":[],"referenceTitles":[],"people":["Tom Hanks"],"strategies":["person_credits"],"mediaType":"movie","quality":"any","description":"Movies starring Tom Hanks"}
+- "movies starring tom hanks after 2010" → {"genres":[],"decades":[],"yearGte":2011,"mood":"any","themes":[],"keywords":[],"referenceTitles":[],"people":["Tom Hanks"],"strategies":["person_credits"],"mediaType":"movie","quality":"any","description":"Movies starring Tom Hanks released after 2010"}
 - "what is trending right now" → {"genres":[],"decades":[],"mood":"any","themes":[],"keywords":[],"referenceTitles":[],"people":[],"strategies":["trending"],"mediaType":"any","quality":"any","description":"Trending movies and TV"}
 - "something like breaking bad" → {"genres":["crime","drama","thriller"],"decades":[],"mood":"intense","themes":["drugs","crime","moral decay"],"keywords":["drug dealer","methamphetamine","drug cartel","money laundering","organized crime","drug trafficking","drug lord","cocaine"],"referenceTitles":["Breaking Bad"],"people":[],"strategies":["recommendations"],"mediaType":"any","quality":"acclaimed","description":"Intense crime dramas like Breaking Bad"}
 - "movies like breaking bad" → {"genres":["crime","drama","thriller"],"decades":[],"mood":"intense","themes":["drugs","crime","moral decay"],"keywords":["drug dealer","methamphetamine","drug cartel","money laundering","organized crime","drug trafficking","drug lord","cocaine"],"referenceTitles":["Breaking Bad"],"people":[],"strategies":["recommendations"],"mediaType":"movie","quality":"acclaimed","description":"Intense crime movies like Breaking Bad"}
@@ -107,6 +111,11 @@ function fallbackInterpret(query: string): ParsedIntent {
     if (d >= 1920 && d <= 2020) intent.decades.push(`${d}s`);
   }
 
+  const afterMatch = t.match(/after (\d{4})/);
+  if (afterMatch) intent.yearGte = parseInt(afterMatch[1]) + 1;
+  const beforeMatch = t.match(/before (\d{4})/);
+  if (beforeMatch) intent.yearLte = parseInt(beforeMatch[1]) - 1;
+
   // Extract reference titles from "like X" or "similar to X" patterns
   const likeMatch = t.match(/(?:like|similar to|type of)\s+(.+?)(?:\s*$|,)/);
   if (likeMatch) intent.referenceTitles.push(likeMatch[1].trim());
@@ -126,7 +135,7 @@ export async function interpretPrompt(query: string): Promise<ParsedIntent> {
   if (!query.trim()) return { ...DEFAULT_INTENT };
 
   const normalised = query.trim().toLowerCase().slice(0, 200);
-  const cacheKey = `gemini:intent:${normalised}:v6`;
+  const cacheKey = `gemini:intent:${normalised}:v7`;
 
   const cached = await getJson<ParsedIntent>(cacheKey);
   if (cached) {
@@ -161,6 +170,8 @@ export async function interpretPrompt(query: string): Promise<ParsedIntent> {
     const intent: ParsedIntent = {
       genres: safeStrArr(raw.genres),
       decades: safeStrArr(raw.decades),
+      yearGte: typeof raw.yearGte === "number" ? raw.yearGte : undefined,
+      yearLte: typeof raw.yearLte === "number" ? raw.yearLte : undefined,
       mood: typeof raw.mood === "string" ? raw.mood : "any",
       themes: safeStrArr(raw.themes),
       keywords: safeStrArr(raw.keywords),
