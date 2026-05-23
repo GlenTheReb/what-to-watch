@@ -48,7 +48,7 @@ Return JSON with exactly these fields:
     - "person_credits": If the user mentions specific actors or directors (must also populate "people" array).
     - "recommendations": If user says "like [Movie/Show]" or "similar to [Title]".
     - "discover": The default strategy for anything else (genres, moods, themes, decades). Use this if none of the above perfectly match.
-  "mediaType": string - "movie", "tv", or "any". Default "any".
+  "mediaType": string - "movie", "tv", or "any". Default "any". IMPORTANT: Only set this to "movie" or "tv" if the user EXPLICITLY says "movies", "films", "shows", "series", or "TV". If they just say "something like [Title]" or "like [Title]" without specifying, keep it "any" — great recommendations can cross the movie/TV boundary.
   "quality": string - "acclaimed", "underrated", "bad" (so-bad-it's-good), or "any". Default "any".
   "description": string - brief 1-line summary of what the user wants.
 }
@@ -57,6 +57,7 @@ Examples:
 - "funny movies from the 90s" → {"genres":["comedy"],"decades":["1990s"],"mood":"lighthearted","themes":[],"keywords":["slapstick","buddy comedy","parody"],"referenceTitles":[],"people":[],"strategies":["discover"],"mediaType":"movie","quality":"any","description":"90s comedies"}
 - "movies starring tom hanks" → {"genres":[],"decades":[],"mood":"any","themes":[],"keywords":[],"referenceTitles":[],"people":["Tom Hanks"],"strategies":["person_credits"],"mediaType":"movie","quality":"any","description":"Movies starring Tom Hanks"}
 - "what is trending right now" → {"genres":[],"decades":[],"mood":"any","themes":[],"keywords":[],"referenceTitles":[],"people":[],"strategies":["trending"],"mediaType":"any","quality":"any","description":"Trending movies and TV"}
+- "something like breaking bad" → {"genres":["crime","drama","thriller"],"decades":[],"mood":"intense","themes":["drugs","crime","moral decay"],"keywords":["drug dealer","methamphetamine","drug cartel","money laundering","organized crime","drug trafficking","drug lord","cocaine"],"referenceTitles":["Breaking Bad"],"people":[],"strategies":["recommendations"],"mediaType":"any","quality":"acclaimed","description":"Intense crime dramas like Breaking Bad"}
 - "movies like breaking bad" → {"genres":["crime","drama","thriller"],"decades":[],"mood":"intense","themes":["drugs","crime","moral decay"],"keywords":["drug dealer","methamphetamine","drug cartel","money laundering","organized crime","drug trafficking","drug lord","cocaine"],"referenceTitles":["Breaking Bad"],"people":[],"strategies":["recommendations"],"mediaType":"movie","quality":"acclaimed","description":"Intense crime movies like Breaking Bad"}
 - "shows like breaking bad" → {"genres":["crime","drama","thriller"],"decades":[],"mood":"intense","themes":["drugs","crime","moral decay"],"keywords":["drug dealer","methamphetamine","drug cartel","money laundering","organized crime","drug trafficking"],"referenceTitles":["Breaking Bad"],"people":[],"strategies":["recommendations"],"mediaType":"tv","quality":"acclaimed","description":"Intense crime dramas like Breaking Bad"}
 
@@ -125,7 +126,7 @@ export async function interpretPrompt(query: string): Promise<ParsedIntent> {
   if (!query.trim()) return { ...DEFAULT_INTENT };
 
   const normalised = query.trim().toLowerCase().slice(0, 200);
-  const cacheKey = `gemini:intent:${normalised}:v5`;
+  const cacheKey = `gemini:intent:${normalised}:v6`;
 
   const cached = await getJson<ParsedIntent>(cacheKey);
   if (cached) {

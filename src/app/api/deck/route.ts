@@ -9,6 +9,7 @@ import {
   searchPerson, fetchPersonMovieCredits, fetchPersonTVCredits,
   fetchMovieCredits, fetchTVCredits,
   MOVIE_GENRE_MAP, TV_GENRE_MAP,
+  MOVIE_GENRE_NAMES, TV_GENRE_NAMES,
 } from "@/lib/tmdb";
 
 /* ─── Types ─── */
@@ -36,6 +37,9 @@ type DeckCard = {
   reason: string;
   voteAverage: number;
   posterPath: string | null;
+  genres: string[];
+  director: string | null;
+  cast: string[];
 };
 
 /* ─── Utilities ─── */
@@ -259,10 +263,10 @@ export async function POST(request: Request) {
   const minVotes = intent.quality === "underrated" ? 50 : 100;
   const minAvg = intent.quality === "bad" ? undefined : 5.5;
 
-  // When using recommendations with a specific media type, also run discover
-  // to find content of the correct type (e.g. "movies like Breaking Bad" needs
-  // discover for movies since Breaking Bad is a TV show on TMDB)
-  if (intent.strategies.includes("recommendations") && intent.mediaType !== "any"
+  // When using recommendations, also run discover to supplement the pool
+  // - For specific mediaType: find content of the correct type across the movie/TV boundary
+  // - For "any": broaden the pool with keyword/genre discover alongside TMDB recs
+  if (intent.strategies.includes("recommendations")
     && !intent.strategies.includes("discover") && intent.keywords.length > 0) {
     console.log("[Deck] Adding discover supplement for cross-media recommendations");
     intent.strategies.push("discover");
@@ -329,7 +333,7 @@ export async function POST(request: Request) {
           const rItems: MediaItem[] = [];
           for (const sr of results.slice(0, 1)) {
             refIds.add(`${sr.media_type === "tv" ? "t" : "m"}${sr.id}`);
-            // Always fetch recs from the reference title for thematic context
+            // Always fetch recs from the reference title's native type
             if (sr.media_type === "tv") {
               const recs = await fetchTVRecommendations(sr.id);
               rItems.push(...recs.map(m => mapMedia(m, "tv", "recommendation")));
@@ -338,6 +342,23 @@ export async function POST(request: Request) {
               rItems.push(...recs.map(m => mapMedia(m, "movie", "recommendation")));
             }
           }
+
+          // Cross-media: also search for the title as the OTHER type
+          // Only when mediaType is "any" (user didn't specify "movies" or "shows")
+          // e.g. "something like Goodfellas" → also find TV shows related to the same themes
+          if (intent.mediaType === "any") {
+            const crossResults = results.filter(r => r.media_type !== results[0]?.media_type).slice(0, 1);
+            for (const sr of crossResults) {
+              if (sr.media_type === "tv") {
+                const recs = await fetchTVRecommendations(sr.id);
+                rItems.push(...recs.map(m => mapMedia(m, "tv", "recommendation")));
+              } else if (sr.media_type === "movie") {
+                const recs = await fetchMovieRecommendations(sr.id);
+                rItems.push(...recs.map(m => mapMedia(m, "movie", "recommendation")));
+              }
+            }
+          }
+
           return rItems;
         }));
       }
@@ -389,8 +410,19 @@ export async function POST(request: Request) {
   const fetchResults = await Promise.all(fetches);
   let candidates = fetchResults.flat();
   
-  // Filter out the reference titles themselves (e.g. don't recommend Game of Thrones for "shows like Game of Thrones")
-  candidates = candidates.filter(m => !refIds.has(`${m.mediaType[0]}${m.id}`));
+  // Filter out the reference titles themselves and franchise entries
+  // e.g. don't recommend "One Piece: The Movie" for "something like One Piece"
+  const refTitleLower = intent.referenceTitles.map(t => t.toLowerCase().trim()).filter(t => t.length > 0);
+  candidates = candidates.filter(m => {
+    if (refIds.has(`${m.mediaType[0]}${m.id}`)) return false;
+    if (refTitleLower.length > 0) {
+      const titleLower = m.title.toLowerCase();
+      for (const ref of refTitleLower) {
+        if (titleLower.includes(ref) || ref.includes(titleLower)) return false;
+      }
+    }
+    return true;
+  });
 
   // Fallback to discover if strategies yielded nothing
   if (candidates.length === 0) {
@@ -466,6 +498,48 @@ export async function POST(request: Request) {
     }
   }
 
+  /* ── 9b. Pool refill — fetch more pages if pool is too thin ── */
+  if (candidates.length < 15 && intent.strategies.includes("discover")) {
+    console.log(`[Deck] Pool thin (${candidates.length} candidates), fetching additional discover pages...`);
+    const existingKeys = new Set(candidates.map(m => `${m.mediaType[0]}${m.id}`));
+    const movieGenreCsv = intent.genres.map(g => MOVIE_GENRE_MAP[g]).filter(Boolean).join(",");
+    const tvGenreCsv = [...new Set(intent.genres.map(g => TV_GENRE_MAP[g]).filter(id => typeof id === "number"))].join(",");
+
+    const year = new Date().getFullYear();
+    const dateRanges = intent.decades.length > 0
+      ? intent.decades.slice(0, 2).map(d => { const [gte, lte] = decadeToRange(d); return { gte, lte }; })
+      : [{ gte: "1970-01-01", lte: `${year}-12-31` }];
+
+    for (const page of [2, 3]) {
+      if (candidates.length >= 15) break;
+      const refills: Promise<MediaItem[]>[] = [];
+      for (const range of dateRanges) {
+        if (wantMovies && movieGenreCsv) refills.push(fetchDiscoverCustom({ page, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_genres: movieGenreCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "genre_discover"))));
+        if (wantTV && tvGenreCsv) refills.push(fetchDiscoverTVCustom({ page, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_genres: tvGenreCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "genre_discover"))));
+        if (wantMovies) refills.push(fetchDiscoverCustom({ page, sort_by: "popularity.desc", vote_count_gte: minVotes, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "genre_discover"))));
+        if (wantTV) refills.push(fetchDiscoverTVCustom({ page, sort_by: "popularity.desc", vote_count_gte: minVotes, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "genre_discover"))));
+      }
+      const refillResults = (await Promise.all(refills)).flat();
+      let added = 0;
+      for (const item of refillResults) {
+        const k = `${item.mediaType[0]}${item.id}`;
+        if (existingKeys.has(k) || seenIds.has(k) || !item.poster_path) continue;
+        if (item.vote_count < Math.min(minVotes, 50)) continue;
+        if (intent.mediaType !== "any" && item.mediaType !== intent.mediaType) continue;
+        // Genre filter
+        if (intent.genres.length > 0) {
+          const ids = genreIdsForMediaType(intent.genres, item.mediaType);
+          if (!ids.includes(16) && item.genre_ids.includes(16)) continue;
+          if (!ids.some(gid => item.genre_ids.includes(gid))) continue;
+        }
+        existingKeys.add(k);
+        candidates.push(item);
+        added++;
+      }
+      console.log(`[Deck] Refill page ${page}: +${added} candidates (total: ${candidates.length})`);
+    }
+  }
+
   /* ── 10. Score, rank, shuffle ── */
   const seed = hashStringToSeed(`${sessionId}:${new Date().toDateString()}:${reroll}`);
   const rand = mulberry32(seed);
@@ -523,15 +597,24 @@ export async function POST(request: Request) {
   );
 
   /* ── 12. Build cards ── */
-  const cards: DeckCard[] = picked.map((m, i) => ({
-    id: `${m.mediaType[0]}${m.id}`,
-    title: m.title,
-    year: m.year,
-    kind: m.mediaType,
-    reason: aiReasons[i] || generateReason(m, intent),
-    voteAverage: m.vote_average,
-    posterPath: m.poster_path,
-  }));
+  const genreNameMap = (mt: "movie" | "tv") => mt === "movie" ? MOVIE_GENRE_NAMES : TV_GENRE_NAMES;
+
+  const cards: DeckCard[] = picked.map((m, i) => {
+    const nameMap = genreNameMap(m.mediaType);
+    const genres = [...new Set(m.genre_ids.map(id => nameMap[id]).filter(Boolean))];
+    return {
+      id: `${m.mediaType[0]}${m.id}`,
+      title: m.title,
+      year: m.year,
+      kind: m.mediaType,
+      reason: aiReasons[i] || generateReason(m, intent),
+      voteAverage: m.vote_average,
+      posterPath: m.poster_path,
+      genres,
+      director: creditsResults[i].director,
+      cast: creditsResults[i].cast,
+    };
+  });
 
   console.log(`[Deck] Generated Cards for "${q}":\n`, cards.map((c, i) => `  ${i + 1}. ${c.title} (${c.year})`).join("\n"));
 

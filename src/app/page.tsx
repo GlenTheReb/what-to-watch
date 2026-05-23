@@ -10,6 +10,9 @@ type DeckCard = {
   reason: string;
   voteAverage: number;
   posterPath: string | null;
+  genres: string[];
+  director: string | null;
+  cast: string[];
 };
 
 const LS_LIKES = "wtw:likes";
@@ -194,6 +197,38 @@ export default function Home() {
             {current.voteAverage > 0 && (
               <div className="text-sm text-yellow-400">
                 {current.voteAverage.toFixed(1)}★
+              </div>
+            )}
+
+            {/* Genres */}
+            {current.genres.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {current.genres.map((g) => (
+                  <span
+                    key={g}
+                    className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-300 border border-gray-700"
+                  >
+                    {g}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Director & Cast */}
+            {(current.director || current.cast.length > 0) && (
+              <div className="mt-2 space-y-0.5 text-sm text-gray-400">
+                {current.director && (
+                  <div>
+                    <span className="text-gray-500">🎬</span>{" "}
+                    {current.director}
+                  </div>
+                )}
+                {current.cast.length > 0 && (
+                  <div>
+                    <span className="text-gray-500">🎭</span>{" "}
+                    {current.cast.slice(0, 3).join(", ")}
+                  </div>
+                )}
               </div>
             )}
 

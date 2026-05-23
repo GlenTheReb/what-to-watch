@@ -66,6 +66,21 @@ export const TV_GENRE_MAP: Record<string, number> = {
   thriller: 80, war: 10768, western: 37,
 };
 
+/* ─── Reverse genre maps (ID → display name) ─── */
+
+export const MOVIE_GENRE_NAMES: Record<number, string> = {
+  28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime",
+  99: "Documentary", 18: "Drama", 10751: "Family", 14: "Fantasy", 36: "History",
+  27: "Horror", 10402: "Music", 9648: "Mystery", 10749: "Romance",
+  878: "Sci-Fi", 53: "Thriller", 10752: "War", 37: "Western",
+};
+
+export const TV_GENRE_NAMES: Record<number, string> = {
+  10759: "Action & Adventure", 16: "Animation", 35: "Comedy", 80: "Crime",
+  99: "Documentary", 18: "Drama", 10751: "Family", 10765: "Sci-Fi & Fantasy",
+  9648: "Mystery", 10768: "War & Politics", 37: "Western",
+};
+
 /* ─── Internals ─── */
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
