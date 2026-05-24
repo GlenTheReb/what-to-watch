@@ -67,8 +67,9 @@ export default function Home() {
         </form>
       </div>
 
-      <div className="w-full text-center text-xs text-gray-600 max-w-sm mx-auto mt-4 pb-2">
-        This product uses the TMDB API but is not endorsed or certified by <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-400 transition-colors">TMDB</a>.
+      <div className="w-full text-center text-xs text-gray-600 max-w-sm mx-auto mt-4 pb-2 space-y-1">
+        <p>Built by Glen Rebello as a personal portfolio project.</p>
+        <p>This product uses the TMDB API but is not endorsed or certified by <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-400 transition-colors">TMDB</a>.</p>
       </div>
     </main>
   );
