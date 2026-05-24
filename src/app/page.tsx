@@ -43,7 +43,7 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-black text-white p-4">
+    <main className="min-h-screen flex items-center justify-center bg-black text-white p-4 relative">
       <div className="w-full max-w-md text-center space-y-4">
         <h1 className="text-5xl font-bold tracking-tight">What to watch</h1>
         <p className="text-gray-400 text-lg">Stop scrolling. Start watching.</p>
@@ -65,6 +65,10 @@ export default function Home() {
             Get picks
           </button>
         </form>
+      </div>
+
+      <div className="absolute bottom-6 text-center text-xs text-gray-600 max-w-sm px-4">
+        This product uses the TMDB API but is not endorsed or certified by <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-400 transition-colors">TMDB</a>.
       </div>
     </main>
   );
