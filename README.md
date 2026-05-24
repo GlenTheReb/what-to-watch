@@ -1,5 +1,7 @@
 # 🎬 What to Watch
 
+**Live Demo:** [what-to-watch-ten-lemon.vercel.app](https://what-to-watch-ten-lemon.vercel.app/)
+
 > Stop scrolling. Start watching.
 
 An AI-powered movie & TV recommendation engine that actually understands what you're in the mood for. Type a vibe, a reference, a genre, a decade — or just "something like Breaking Bad" — and get 10 curated picks ranked by real signal, not popularity noise.
@@ -240,8 +242,8 @@ Open [http://localhost:3000](http://localhost:3000).
 
 - [ ] Perfect the recommendation algorithm — scoring weights, thematic matching, edge-case handling
 - [ ] Polish the UI/UX — mobile-first swipe experience, animations, visual design
-- [ ] Cloud / Kubernetes deployment with persistent Redis
-- [ ] CI/CD pipeline (build, lint, test, deploy)
+- [x] Cloud deployment (Vercel) with persistent Redis (Upstash)
+- [x] CI/CD pipeline via Vercel (build, lint, test, deploy)
 
 ---
 
