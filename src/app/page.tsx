@@ -43,12 +43,12 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-black text-white p-4 relative">
-      <div className="w-full max-w-md text-center space-y-4">
+    <main className="min-h-[100dvh] flex flex-col bg-black text-white p-4">
+      <div className="flex-1 flex flex-col items-center justify-center w-full max-w-md mx-auto text-center space-y-4">
         <h1 className="text-5xl font-bold tracking-tight">What to watch</h1>
         <p className="text-gray-400 text-lg">Stop scrolling. Start watching.</p>
 
-        <form onSubmit={onSubmit} className="mt-8 flex flex-col items-center">
+        <form onSubmit={onSubmit} className="mt-8 w-full flex flex-col items-center">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -67,7 +67,7 @@ export default function Home() {
         </form>
       </div>
 
-      <div className="absolute bottom-6 text-center text-xs text-gray-600 max-w-sm px-4">
+      <div className="w-full text-center text-xs text-gray-600 max-w-sm mx-auto mt-4 pb-2">
         This product uses the TMDB API but is not endorsed or certified by <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-400 transition-colors">TMDB</a>.
       </div>
     </main>
