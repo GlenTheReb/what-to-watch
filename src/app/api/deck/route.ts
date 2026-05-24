@@ -574,9 +574,23 @@ export async function POST(request: Request) {
   const ranked = scored.map((x) => x.m);
 
   // Pin the top 5 highest-scoring items — they always appear.
-  // Shuffle the next 35 for variety and pick 5 more.
   const pinned = ranked.slice(0, 5);
-  const varietyPool = ranked.slice(5, 40);
+
+  // Create a variety pool, but cut it off if scores drop off a cliff.
+  // This prevents irrelevant generic fallbacks from sneaking into highly specific queries.
+  const lastPinnedScore = pinned.length > 0 ? scored[pinned.length - 1].s : 0;
+  const minVarietyScore = lastPinnedScore * 0.6; 
+  
+  let varietyPool = scored
+    .slice(5, 40)
+    .filter((x) => x.s >= minVarietyScore)
+    .map((x) => x.m);
+
+  // If the strict cutoff starved our variety pool, guarantee at least the next best items
+  if (varietyPool.length < 5) {
+    varietyPool = ranked.slice(5, 10);
+  }
+
   shuffleInPlace(varietyPool, rand);
 
   let picked = [...pinned, ...varietyPool.slice(0, 5)];
