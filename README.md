@@ -108,6 +108,7 @@ User prompt
 | Data | TMDB API v3 |
 | Cache | Upstash Redis (`@upstash/redis`) |
 | Language | TypeScript 5 |
+| CI/CD | GitHub Actions, Playwright, Vercel Preview Deployments |
 
 ### Project Structure
 
@@ -151,6 +152,21 @@ src/
 7. Fetch credits for the final 10
 8. Generate AI reasoning via Gemini
 9. Return cards with fallback to template-based reasons
+
+### 🔄 CI/CD & DevOps Pipeline
+
+This project features a "Gold Standard" automated DevOps pipeline designed for safety and speed:
+
+1. **Code Quality Checks (GitHub Actions)**
+   - Every push and Pull Request automatically runs ESLint and TypeScript compilation checks to catch syntax and type errors before they are ever merged.
+2. **Vercel Preview Deployments (CD)**
+   - Opening a Pull Request instantly triggers Vercel to build and deploy a live "Preview" cloud environment of the app.
+3. **End-to-End UI Testing (Playwright)**
+   - A dedicated GitHub Action automatically pauses and waits for Vercel's Preview URL to be generated.
+   - Once the live URL is ready, Playwright boots up headless browsers (Chromium, Firefox, WebKit) and runs End-to-End tests against the *live cloud environment*.
+   - Tests utilize network interception to mock the TMDB/Gemini APIs, ensuring deterministic testing of the React UI and `localStorage` state management without burning API credits.
+4. **Branch Protection**
+   - The `main` branch is strictly protected. Code can only be merged via a Pull Request after both the Code Quality and E2E Testing checks pass.
 
 ---
 
