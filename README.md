@@ -272,4 +272,4 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## 📄 License
 
-Private project. Not currently licensed for distribution.
+This project is licensed under the MIT License.
