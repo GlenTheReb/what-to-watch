@@ -2,6 +2,13 @@
 
 **Live Demo:** [what-to-watch-ten-lemon.vercel.app](https://what-to-watch-ten-lemon.vercel.app/)
 
+**Screenshots**
+<img width="1598" height="979" alt="image" src="https://github.com/user-attachments/assets/bb8c56d7-3467-4c1c-b561-5fe84285f3f8" />
+
+<img width="1613" height="985" alt="image" src="https://github.com/user-attachments/assets/10ae50c2-a258-4115-ac5a-c6594e238e22" />
+
+
+
 > Stop scrolling. Start watching.
 
 An AI-powered movie & TV recommendation engine that actually understands what you're in the mood for. Type a vibe, a reference, a genre, a decade — or just "something like Breaking Bad" — and get 10 curated picks ranked by real signal, not popularity noise.
