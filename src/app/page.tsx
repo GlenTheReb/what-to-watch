@@ -43,26 +43,37 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-[100dvh] flex flex-col bg-black text-white p-4">
-      <div className="flex-1 flex flex-col items-center justify-center w-full max-w-md mx-auto text-center space-y-4">
-        <h1 className="text-5xl font-bold tracking-tight">What to watch</h1>
-        <p className="text-gray-400 text-lg">Stop scrolling. Start watching.</p>
+    <main className="min-h-[100dvh] flex flex-col bg-black text-white px-4 relative overflow-hidden">
+      {/* Subtle background glow effect */}
+      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[500px] bg-white/5 rounded-[100%] blur-[120px] pointer-events-none" />
 
-        <form onSubmit={onSubmit} className="mt-8 w-full flex flex-col items-center">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={placeholder}
-            className="w-full px-4 py-4 rounded-lg bg-gray-900 border border-gray-700 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-all text-lg"
-            autoFocus
-          />
+      <div className="flex-1 flex flex-col items-center justify-center w-full max-w-3xl mx-auto text-center space-y-6 relative z-10 pb-20">
+        <div className="space-y-4">
+          <h1 className="text-6xl md:text-8xl font-bold tracking-tighter bg-clip-text text-transparent bg-gradient-to-b from-white to-white/40 pb-2">
+            What to watch
+          </h1>
+          <p className="text-gray-400 text-xl md:text-2xl font-medium tracking-wide">Stop scrolling. Start watching.</p>
+        </div>
+
+        <form onSubmit={onSubmit} className="mt-16 w-full flex flex-col items-center gap-8">
+          <div className="relative w-full group">
+            {/* Input glow effect */}
+            <div className="absolute inset-0 bg-gradient-to-r from-gray-500 to-gray-400 rounded-3xl blur-xl opacity-10 group-hover:opacity-20 transition-opacity duration-700" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={placeholder}
+              className="relative w-full px-8 py-6 rounded-3xl bg-white/5 backdrop-blur-2xl border border-white/10 focus:outline-none focus:border-white/30 focus:ring-1 focus:ring-white/30 transition-all text-xl md:text-2xl font-light placeholder:text-gray-600 shadow-2xl"
+              autoFocus
+            />
+          </div>
 
           <button
             type="submit"
             disabled={!query.trim()}
-            className="mt-6 px-8 py-3 bg-white text-black rounded font-semibold disabled:opacity-50 hover:bg-gray-200 transition-colors text-lg"
+            className="px-12 py-5 bg-white text-black rounded-full font-bold tracking-wide disabled:opacity-50 hover:scale-[1.02] active:scale-95 transition-all duration-300 text-lg shadow-[0_0_30px_rgba(255,255,255,0.1)] hover:shadow-[0_0_40px_rgba(255,255,255,0.3)]"
           >
-            Get picks
+            Get Recommendations
           </button>
         </form>
       </div>
