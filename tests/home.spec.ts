@@ -8,15 +8,15 @@ test('homepage loads and can submit search', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'What to watch' })).toBeVisible();
 
   // Find the search input and the submit button
-  const searchInput = page.locator('input');
-  const getPicksButton = page.getByRole('button', { name: 'Get picks' });
+  const searchInput = page.getByRole('textbox');
+  const getPicksButton = page.getByRole('button', { name: 'Get Recommendations' });
 
   // Make sure the input is visible, and the button starts off disabled
   await expect(searchInput).toBeVisible();
   await expect(getPicksButton).toBeDisabled();
 
   // Type a query
-  await searchInput.fill('action movies from the 90s');
+  await searchInput.pressSequentially('action movies from the 90s', { delay: 10 });
 
   // The button should now become enabled
   await expect(getPicksButton).toBeEnabled();
