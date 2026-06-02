@@ -9,7 +9,7 @@ test('homepage loads and can submit search', async ({ page }) => {
 
   // Find the search input and the submit button
   const searchInput = page.getByRole('textbox');
-  const getPicksButton = page.getByRole('button', { name: 'Get Recommendations' });
+  const getPicksButton = page.getByRole('button', { name: 'Find My Next Watch' });
 
   // Make sure the input is visible, and the button starts off disabled
   await expect(searchInput).toBeVisible();

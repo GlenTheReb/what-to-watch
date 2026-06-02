@@ -110,7 +110,7 @@ User prompt
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 16 (App Router), React 19, TailwindCSS 4 |
+| Frontend | Next.js 16 (App Router), React 19, TailwindCSS 4, Framer Motion, Lucide Icons |
 | AI | Google Gemini 3.1 Flash Lite (`@google/generative-ai`) |
 | Data | TMDB API v3 |
 | Cache | Upstash Redis (`@upstash/redis`) |
@@ -264,7 +264,7 @@ Open [http://localhost:3000](http://localhost:3000).
 ## 🗺️ Roadmap
 
 - [ ] Perfect the recommendation algorithm — scoring weights, thematic matching, edge-case handling
-- [ ] Polish the UI/UX — mobile-first swipe experience, animations, visual design
+- [x] Polish the UI/UX — mobile-first swipe experience, animations, visual design
 - [x] Cloud deployment (Vercel) with persistent Redis (Upstash)
 - [x] CI/CD pipeline via Vercel (build, lint, test, deploy)
 

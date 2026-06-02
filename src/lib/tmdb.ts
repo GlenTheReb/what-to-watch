@@ -324,6 +324,7 @@ export type TitleCredits = {
   director: string | null;
   parentalRating: string | null;
   watchProviders: any;
+  trailerUrl?: string | null;
 };
 
 export async function fetchMovieCredits(movieId: number): Promise<TitleCredits> {
@@ -331,9 +332,9 @@ export async function fetchMovieCredits(movieId: number): Promise<TitleCredits> 
   const cached = await getJson<TitleCredits>(key);
   if (cached) return cached;
 
-  const url = `${TMDB_BASE}/movie/${movieId}?append_to_response=credits,release_dates,watch/providers&language=en-US` + tmdbAuthQuery();
+  const url = `${TMDB_BASE}/movie/${movieId}?append_to_response=credits,release_dates,watch/providers,videos&language=en-US` + tmdbAuthQuery();
   const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
-  if (!res.ok) return { cast: [], director: null, parentalRating: null, watchProviders: null };
+  if (!res.ok) return { cast: [], director: null, parentalRating: null, watchProviders: null, trailerUrl: null };
   const data = await res.json();
   const credits = data.credits ?? {};
   const cast = (credits.cast ?? []).slice(0, 5).map((c: any) => c.name as string);
@@ -347,8 +348,11 @@ export async function fetchMovieCredits(movieId: number): Promise<TitleCredits> 
   }
 
   const watchProviders = data["watch/providers"]?.results ?? null;
+  const videos = data.videos?.results ?? [];
+  const trailer = videos.find((v: any) => v.site === "YouTube" && v.type === "Trailer");
+  const trailerUrl = trailer ? `https://www.youtube.com/watch?v=${trailer.key}` : null;
 
-  const result: TitleCredits = { cast, director, parentalRating, watchProviders };
+  const result: TitleCredits = { cast, director, parentalRating, watchProviders, trailerUrl };
   await setJson(key, result, 24 * 60 * 60);
   return result;
 }
@@ -358,9 +362,9 @@ export async function fetchTVCredits(tvId: number): Promise<TitleCredits> {
   const cached = await getJson<TitleCredits>(key);
   if (cached) return cached;
 
-  const url = `${TMDB_BASE}/tv/${tvId}?append_to_response=credits,content_ratings,watch/providers&language=en-US` + tmdbAuthQuery();
+  const url = `${TMDB_BASE}/tv/${tvId}?append_to_response=credits,content_ratings,watch/providers,videos&language=en-US` + tmdbAuthQuery();
   const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
-  if (!res.ok) return { cast: [], director: null, parentalRating: null, watchProviders: null };
+  if (!res.ok) return { cast: [], director: null, parentalRating: null, watchProviders: null, trailerUrl: null };
   const data = await res.json();
   const credits = data.credits ?? {};
   const cast = (credits.cast ?? []).slice(0, 5).map((c: any) => c.name as string);
@@ -375,8 +379,11 @@ export async function fetchTVCredits(tvId: number): Promise<TitleCredits> {
   }
 
   const watchProviders = data["watch/providers"]?.results ?? null;
+  const videos = data.videos?.results ?? [];
+  const trailer = videos.find((v: any) => v.site === "YouTube" && v.type === "Trailer");
+  const trailerUrl = trailer ? `https://www.youtube.com/watch?v=${trailer.key}` : null;
 
-  const result: TitleCredits = { cast, director, parentalRating, watchProviders };
+  const result: TitleCredits = { cast, director, parentalRating, watchProviders, trailerUrl };
   await setJson(key, result, 24 * 60 * 60);
   return result;
 }

@@ -10,12 +10,19 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-outfit: var(--font-outfit);
+  --color-plum-950: #1a0f1c;
+  --color-plum-900: #2d1633;
+  --color-plum-800: #462250;
+  --color-plum-500: #934c9c;
+  --color-plum-400: #b56bc2;
+  --color-plum-100: #f4ebf4;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #09040a;
+    --foreground: #f4ebf4;
   }
 }
 
