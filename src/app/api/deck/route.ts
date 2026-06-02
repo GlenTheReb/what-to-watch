@@ -43,6 +43,8 @@ type DeckCard = {
   parentalRating: string | null;
   watchProviders?: { provider_name: string; logo_path: string }[];
   watchLink?: string;
+  language?: string;
+  trailerUrl?: string | null;
 };
 
 /* ─── Utilities ─── */
@@ -653,6 +655,8 @@ export async function POST(request: Request) {
       parentalRating: creditsResults[i].parentalRating,
       watchProviders: streaming,
       watchLink,
+      language: m.original_language ? m.original_language.toUpperCase() : "EN",
+      trailerUrl: creditsResults[i].trailerUrl ?? null,
     };
   });
 
