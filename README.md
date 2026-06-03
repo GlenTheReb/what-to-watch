@@ -23,10 +23,11 @@ Most recommendation apps either reshuffle popular titles or let an LLM hallucina
 
 **What to Watch** takes a hybrid approach:
 
-1. **Gemini parses your intent** — natural language → structured query (genres, moods, themes, keywords, reference titles, people).
+1. **Gemini parses your intent** — natural language → structured query (genres, moods, themes, keywords, reference titles, people, genre strictness).
 2. **TMDB provides the ground truth** — candidates are sourced from real data via targeted API strategies (discover, recommendations, person credits, trending, etc.).
-3. **A deterministic scoring pipeline ranks everything** — thematic overlap, genre matching, quality signals, decade alignment, user taste history.
-4. **Gemini explains each pick** — every card gets a personalized "Why this?" reason generated from cast, crew, and plot context.
+3. **TMDB keyword tags validate relevance** — each candidate's structured keyword tags are fetched and matched against your intent for precise scoring.
+4. **A deterministic scoring pipeline ranks everything** — TMDB tag matching, word-level overview matching, genre overlap, quality signals, decade alignment, user taste history.
+5. **Gemini explains each pick** — every card gets a personalized "Why this?" reason generated from cast, crew, and plot context.
 
 No hallucinated titles. No accounts. No database. Just good recommendations.
 
@@ -65,10 +66,10 @@ User prompt
            ▼
 ┌──────────────────────┐
 │  Scoring Pipeline     │  ← Deterministic ranking
-│                       │     thematic hits, genre overlap,
-│  • Quality signals    │     source bonuses, decade match,
-│  • Keyword matching   │     mood nudges, user taste weights
-│  • Source weighting   │
+│                       │     TMDB keyword tag matching,
+│  • Tag matching       │     word-level overview matching,
+│  • Word-level match   │     genre overlap, source weighting,
+│  • Genre overlap      │     mood nudges, user taste weights
 │  • User taste model   │
 └──────────┬───────────┘
            │
@@ -138,7 +139,7 @@ src/
 ### Key Modules
 
 **`gemini.ts`** — Two AI functions:
-- `interpretPrompt()` — Parses natural language into a `ParsedIntent` struct (genres, mood, themes, keywords, reference titles, people, strategies, media type, quality). Falls back to regex-based extraction if no API key is set.
+- `interpretPrompt()` — Parses natural language into a `ParsedIntent` struct (genres, mood, themes, keywords, reference titles, people, strategies, media type, quality, genreMode). Falls back to regex-based extraction if no API key is set.
 - `generateWhyReasons()` — Takes the final 10 picks with their cast/crew data and generates personalized "Why this?" explanations in a single batch call.
 
 **`tmdb.ts`** — Comprehensive TMDB wrapper covering:
@@ -147,18 +148,20 @@ src/
 - Title-based recommendations
 - Person credits (filmography)
 - Title credits (cast + director extraction for "Why X?" enrichment)
+- Keyword tag fetching (structured metadata for scoring)
 - Trending, popular, top-rated, and upcoming endpoints
 
 **`route.ts`** — The `/api/deck` POST handler orchestrating the full pipeline:
-1. Parse intent via Gemini
+1. Parse intent via Gemini (with genreMode for strict/loose genre filtering)
 2. Route to TMDB strategies based on intent
 3. Fetch all candidates in parallel
 4. De-duplicate, filter (anime, media type, genre, seen IDs)
-5. Score and rank deterministically
-6. Shuffle a variety pool with seeded PRNG
-7. Fetch credits for the final 10
-8. Generate AI reasoning via Gemini
-9. Return cards with fallback to template-based reasons
+5. Fetch TMDB keyword tags for top 25 candidates
+6. Score and rank deterministically (tag matching + word-level overview matching)
+7. Shuffle a variety pool with seeded PRNG (score-gated to prevent junk)
+8. Fetch credits for the final 10
+9. Generate AI reasoning via Gemini
+10. Return cards with fallback to template-based reasons
 
 ### 🔄 CI/CD & DevOps Pipeline
 
@@ -183,14 +186,13 @@ Each candidate is scored using a composite of signals:
 
 | Signal | Points | Notes |
 |---|---|---|
-| Theme/keyword hits in overview | +12–15 each | Primary relevance signal |
-| Multiple thematic hits (2+/3+) | +10/+20 bonus | Compounds relevance |
-| TMDB recommendation source | +35–120 | Higher if thematically validated |
+| TMDB keyword tag match | +18/+15/+12/+8 each | **Primary** relevance signal — structured metadata |
+| Overview/title word match | +10/+8/+5/+3 each | Secondary signal — word-level matching against overview + title |
+| Completeness bonus (75%+ match) | +20 | When a show matches most intent terms |
+| TMDB recommendation source | +35–120 | Higher if thematically validated via word hits |
 | Person credits source | +40 | Actor/director match |
-| Targeted discover source | +40 | Keywords + genres combined |
-| Keyword discover source | +25 | Keywords only |
-| Genre overlap | +15 per match | Deduplicated for TV genre aliasing |
-| Genre mismatch penalty | −15 | When intent has genres but item matches none |
+| Genre overlap | +8 per match | Deduplicated for TV genre aliasing |
+| Genre mismatch penalty | −10 | When intent has genres but item matches none |
 | Decade match | +10 | When item falls within requested decade |
 | Quality baseline | ~+10–15 | `vote_average × 1.5 + log(vote_count) × 2` |
 | Quality mode (underrated) | up to +30 | Inverse popularity bonus |
