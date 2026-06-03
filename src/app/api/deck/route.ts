@@ -7,7 +7,7 @@ import {
   fetchMovieRecommendations, fetchTVRecommendations,
   fetchTrending, fetchPopular, fetchTopRated, fetchUpcomingMovies,
   searchPerson, fetchPersonMovieCredits, fetchPersonTVCredits,
-  fetchMovieCredits, fetchTVCredits,
+  fetchMovieCredits, fetchTVCredits, fetchKeywordTags,
   MOVIE_GENRE_MAP, TV_GENRE_MAP,
   MOVIE_GENRE_NAMES, TV_GENRE_NAMES,
 } from "@/lib/tmdb";
@@ -122,86 +122,150 @@ function scoreItem(
   intent: ParsedIntent,
   likeCounts: Map<number, number>,
   passCounts: Map<number, number>,
-): number {
+  keywordTags: string[],
+): { score: number; breakdown: Record<string, number | string> } {
   let s = 0;
+  const breakdown: Record<string, number | string> = {};
 
-  // Theme + keyword matching in overview — this is the PRIMARY relevance signal
+  // Theme + keyword matching — PRIMARY relevance signal
+  // Split multi-word terms into individual words and match against overview + title.
+  const STOP_WORDS = new Set(["the", "a", "an", "and", "or", "of", "in", "to", "for", "is", "it", "on", "by", "with", "as", "at", "from", "that", "this", "but", "not", "are", "was", "were", "has", "had", "its"]);
   const overview = item.overview.toLowerCase();
-  let thematicHits = 0;
-  for (const theme of intent.themes) {
-    if (overview.includes(theme.toLowerCase())) { s += 15; thematicHits++; }
-  }
-  for (const kw of intent.keywords) {
-    if (overview.includes(kw.toLowerCase())) { s += 12; thematicHits++; }
-  }
-  // Bonus for multiple thematic hits (compounds relevance)
-  if (thematicHits >= 3) s += 20;
-  else if (thematicHits >= 2) s += 10;
+  const titleLower = item.title.toLowerCase();
+  const searchText = `${titleLower} ${overview}`;
 
-  // Source bonus
-  if (item.source === "recommendation") {
-    if (thematicHits >= 2) {
-      s += 100; // Full trust: TMDB says it's similar AND it shares real thematic DNA
-      s += 20;
-    } else {
-      s += 35;  // Reduced trust: TMDB says it's similar but weak/no thematic overlap
+  // Build a deduplicated set of meaningful words from all themes + keywords
+  const allTermWords = new Set<string>();
+  for (const term of [...intent.themes, ...intent.keywords]) {
+    for (const word of term.toLowerCase().split(/\s+/)) {
+      if (word.length > 3 && !STOP_WORDS.has(word)) allTermWords.add(word);
     }
   }
-  else if (item.source === "person_credits") s += 40;
-  else if (item.source === "targeted_discover") s += 40;
-  else if (item.source === "keyword_discover") s += 25;
-  else if (item.source === "trending" || item.source === "upcoming") s += 10;
 
-  // Baseline quality (modest — don't let rating dominate)
-  s += item.vote_average * 1.5;
-  s += Math.log10(item.vote_count + 1) * 2;
+  let wordHits = 0;
+  const matchedWords: string[] = [];
+  const missedWords: string[] = [];
+  for (const word of allTermWords) {
+    if (searchText.includes(word)) { wordHits++; matchedWords.push(word); }
+    else missedWords.push(word);
+  }
+
+  // Overview text is a SECONDARY signal — unreliable, short marketing blurbs
+  let wordScore = 0;
+  const hitValues = [10, 8, 5, 3, 3, 3, 3, 3];
+  for (let i = 0; i < wordHits; i++) {
+    wordScore += hitValues[Math.min(i, hitValues.length - 1)];
+  }
+  s += wordScore;
+  breakdown.wordHits = wordHits;
+  breakdown.wordScore = wordScore;
+  breakdown.matched = matchedWords.join(",") || "none";
+  breakdown.missed = missedWords.join(",") || "none";
+
+  // TMDB keyword tag matching — structured metadata signal
+  // Match intent words against the show's actual TMDB keyword tags
+  let tagHits = 0;
+  const matchedTags: string[] = [];
+  if (keywordTags.length > 0) {
+    for (const word of allTermWords) {
+      // Check if any TMDB tag contains this word
+      if (keywordTags.some(tag => tag.includes(word))) {
+        tagHits++;
+        matchedTags.push(word);
+      }
+    }
+  }
+  // TMDB tags are the PRIMARY signal — structured, reliable metadata
+  // Diminishing returns: 1st +18, 2nd +15, 3rd +12, 4th+ +8. No cap.
+  const tagHitValues = [18, 15, 12, 8, 8, 8];
+  let tagScore = 0;
+  for (let i = 0; i < tagHits; i++) {
+    tagScore += tagHitValues[Math.min(i, tagHitValues.length - 1)];
+  }
+  s += tagScore;
+  breakdown.tagHits = tagHits;
+  breakdown.tagScore = tagScore;
+  if (matchedTags.length > 0) breakdown.matchedTags = matchedTags.join(",");
+
+  // Completeness bonus: reward shows matching 75%+ of all unique term words
+  let completenessBonus = 0;
+  if (allTermWords.size > 0 && wordHits >= Math.ceil(allTermWords.size * 0.75)) {
+    completenessBonus = 20;
+  }
+  s += completenessBonus;
+  breakdown.completeness = completenessBonus;
+
+  // Source bonus — only for high-signal sources, NOT discover pipelines
+  let sourceBonus = 0;
+  if (item.source === "recommendation") {
+    sourceBonus = wordHits >= 2 ? 120 : 35;
+  }
+  else if (item.source === "person_credits") sourceBonus = 40;
+  else if (item.source === "trending" || item.source === "upcoming") sourceBonus = 10;
+  s += sourceBonus;
+  breakdown.source = sourceBonus;
+
+  // Baseline quality
+  const qualityBase = item.vote_average * 1.5 + Math.log10(item.vote_count + 1) * 2;
+  s += qualityBase;
+  breakdown.quality = Math.round(qualityBase * 10) / 10;
 
   // Genre overlap
   const itemGenres = new Set(item.genre_ids);
-  // Deduplicate intentIds so we don't double count combined TV genres (like action and adventure both mapping to 10759)
   const intentIds = new Set(genreIdsForMediaType(intent.genres, item.mediaType));
   let genreOverlap = 0;
   for (const gid of intentIds) {
     if (itemGenres.has(gid)) genreOverlap++;
   }
-  s += genreOverlap * 15;
-  if (intentIds.size > 0 && genreOverlap === 0) s -= 15;
+  let genreScore = genreOverlap * 8;
+  if (intentIds.size > 0 && genreOverlap === 0) genreScore = -10;
+  s += genreScore;
+  breakdown.genre = `${genreOverlap}/${intentIds.size}=${genreScore}`;
 
   // Decade match
+  let decadeScore = 0;
   if (intent.decades.length > 0 && item.year > 0) {
     for (const decade of intent.decades) {
       const decadeStart = parseInt(decade);
-      if (item.year >= decadeStart && item.year <= decadeStart + 9) { s += 10; break; }
+      if (item.year >= decadeStart && item.year <= decadeStart + 9) { decadeScore = 10; break; }
     }
   }
+  s += decadeScore;
+  if (decadeScore) breakdown.decade = decadeScore;
 
   // Quality preference
+  let qualPref = 0;
   if (intent.quality === "underrated") {
-    s += Math.max(0, 30 - Math.log10(item.popularity + 1) * 10);
+    qualPref = Math.max(0, 30 - Math.log10(item.popularity + 1) * 10);
   } else if (intent.quality === "bad") {
-    s -= item.vote_average * 2;
-    s += Math.log10(item.popularity + 1) * 2;
+    qualPref = -(item.vote_average * 2) + Math.log10(item.popularity + 1) * 2;
   } else if (intent.quality === "acclaimed") {
-    s += item.vote_average * 3;
+    qualPref = item.vote_average * 3;
   }
-
-  // (Thematic matching moved up to calculate source bonus)
+  s += qualPref;
+  if (qualPref) breakdown.qualPref = Math.round(qualPref * 10) / 10;
 
   // Mood nudges
+  let moodScore = 0;
   if (intent.mood !== "any") {
     const kws = MOOD_KEYWORDS[intent.mood] ?? [];
     for (const kw of kws) {
-      if (overview.includes(kw)) { s += 4; break; }
+      if (overview.includes(kw)) { moodScore = 4; break; }
     }
   }
+  s += moodScore;
+  if (moodScore) breakdown.mood = moodScore;
 
   // User taste
+  let tasteScore = 0;
   for (const g of item.genre_ids) {
-    s += (likeCounts.get(g) ?? 0) * 2;
-    s -= (passCounts.get(g) ?? 0) * 1;
+    tasteScore += (likeCounts.get(g) ?? 0) * 2;
+    tasteScore -= (passCounts.get(g) ?? 0) * 1;
   }
+  s += tasteScore;
+  if (tasteScore) breakdown.taste = tasteScore;
 
-  return s;
+  return { score: s, breakdown };
 }
 
 function generateReason(item: MediaItem, intent: ParsedIntent): string {
@@ -374,7 +438,8 @@ export async function POST(request: Request) {
       // Search ALL keywords + themes as TMDB keyword IDs for maximum coverage
       const allSearchTerms = [...new Set([...intent.keywords, ...intent.themes])];
       const keywordIds: number[] = [];
-      for (const kw of allSearchTerms.slice(0, 8)) {
+      // Only take top 3 to avoid diluting TMDB results with generic keywords
+      for (const kw of allSearchTerms.slice(0, 3)) {
         const results = await searchKeywords(kw);
         if (results[0]) keywordIds.push(results[0].id);
       }
@@ -505,6 +570,10 @@ export async function POST(request: Request) {
       // Conversely, if the intent DOES NOT ask for animation, filter out animation to preserve live-action queries.
       if (!ids.includes(16) && m.genre_ids.includes(16)) return false;
 
+      // Apply genreMode matching
+      if (intent.genreMode === "strict") {
+         return ids.every((gid) => m.genre_ids.includes(gid));
+      }
       return ids.some((gid) => m.genre_ids.includes(gid));
     });
 
@@ -559,18 +628,52 @@ export async function POST(request: Request) {
     }
   }
 
-  /* ── 10. Score, rank, shuffle ── */
+  /* ── 10. Fetch TMDB keyword tags for top candidates ── */
+  // Pre-sort by a quick score (genre overlap + quality) to pick top 25 for tag fetching
+  const quickScored = candidates
+    .map((m) => {
+      const intentIds = new Set(genreIdsForMediaType(intent.genres, m.mediaType));
+      let qs = 0;
+      for (const gid of intentIds) { if (m.genre_ids.includes(gid)) qs += 8; }
+      qs += m.vote_average * 1.5;
+      return { m, qs };
+    })
+    .sort((a, b) => b.qs - a.qs);
+
+  const top25 = quickScored.slice(0, 25).map(x => x.m);
+  const tagMap = new Map<string, string[]>(); // key: "movie:123" or "tv:456"
+
+  console.log(`[Deck] Fetching keyword tags for top ${top25.length} candidates...`);
+  const tagResults = await Promise.all(
+    top25.map(async (m) => {
+      const mt = m.mediaType === "movie" ? "movie" as const : "tv" as const;
+      const tags = await fetchKeywordTags(m.id, mt);
+      return { key: `${mt}:${m.id}`, tags };
+    })
+  );
+  for (const { key, tags } of tagResults) {
+    tagMap.set(key, tags);
+  }
+  console.log(`[Deck] Keyword tags fetched.`);
+
+  /* ── 11. Score, rank, shuffle ── */
   const seed = hashStringToSeed(`${sessionId}:${new Date().toDateString()}:${reroll}`);
   const rand = mulberry32(seed);
 
   const scored = candidates
-    .map((m) => ({ m, s: scoreItem(m, intent, likeCounts, passCounts) }))
+    .map((m) => {
+      const mt = m.mediaType === "movie" ? "movie" : "tv";
+      const tags = tagMap.get(`${mt}:${m.id}`) ?? [];
+      const { score, breakdown } = scoreItem(m, intent, likeCounts, passCounts, tags);
+      return { m, s: score, breakdown };
+    })
     .sort((a, b) => b.s - a.s);
 
-  // Debug: show top 20 candidates with scores and sources
-  console.log(`[Deck] Top 20 scored candidates:`);
-  for (const { m, s } of scored.slice(0, 20)) {
+  // Debug: show top 10 candidates with full score breakdowns
+  console.log(`[Deck] Top 10 scored candidates (detailed):`);
+  for (const { m, s, breakdown } of scored.slice(0, 10)) {
     console.log(`  ${s.toFixed(1).padStart(6)} | ${m.source.padEnd(20)} | ${m.title} (${m.year})`);
+    console.log(`         ${JSON.stringify(breakdown)}`);
   }
 
   const ranked = scored.map((x) => x.m);
@@ -581,25 +684,24 @@ export async function POST(request: Request) {
   // Create a variety pool, but cut it off if scores drop off a cliff.
   // This prevents irrelevant generic fallbacks from sneaking into highly specific queries.
   const lastPinnedScore = pinned.length > 0 ? scored[pinned.length - 1].s : 0;
-  const minVarietyScore = lastPinnedScore * 0.6; 
+  const minVarietyScore = lastPinnedScore * 0.8; 
   
   let varietyPool = scored
-    .slice(5, 40)
+    .slice(5, 15)
     .filter((x) => x.s >= minVarietyScore)
     .map((x) => x.m);
 
-  // If the strict cutoff starved our variety pool, guarantee at least the next best items
-  if (varietyPool.length < 5) {
-    varietyPool = ranked.slice(5, 10);
-  }
+  // If variety pool is small, that's fine — quality over quantity.
+  // Don't backfill with unfiltered junk.
 
   shuffleInPlace(varietyPool, rand);
 
   let picked = [...pinned, ...varietyPool.slice(0, 5)];
   if (picked.length < 10) {
     const seen = new Set(picked.map((m) => `${m.mediaType[0]}${m.id}`));
-    for (const m of ranked) {
+    for (const { m, s: itemScore } of scored) {
       if (picked.length >= 10) break;
+      if (itemScore < minVarietyScore) continue; // Only pad with quality items
       const k = `${m.mediaType[0]}${m.id}`;
       if (!seen.has(k)) { picked.push(m); seen.add(k); }
     }

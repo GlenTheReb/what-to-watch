@@ -416,3 +416,26 @@ export async function fetchPersonTVCredits(personId: number): Promise<TmdbPerson
   return data;
 }
 
+/* ─── Keyword Tags (structured metadata for scoring) ─── */
+
+export async function fetchKeywordTags(
+  id: number,
+  mediaType: "movie" | "tv",
+): Promise<string[]> {
+  const key = `tmdb:${mediaType}:${id}:keywords:v1`;
+  const cached = await getJson<string[]>(key);
+  if (cached) return cached;
+
+  const url = `${TMDB_BASE}/${mediaType}/${id}/keywords` + `?language=en-US` + tmdbAuthQuery();
+  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  if (!res.ok) return [];
+
+  const data = await res.json();
+  // Movie endpoint returns { keywords: [...] }, TV returns { results: [...] }
+  const rawTags: { id: number; name: string }[] = data.keywords ?? data.results ?? [];
+  const tags = rawTags.map((t) => t.name.toLowerCase());
+
+  await setJson(key, tags, 7 * 24 * 60 * 60); // Cache for 7 days — tags rarely change
+  return tags;
+}
+

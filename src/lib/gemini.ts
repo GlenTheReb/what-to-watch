@@ -14,6 +14,7 @@ export type ParsedIntent = {
   strategies: string[];
   mediaType: "movie" | "tv" | "any";
   quality: "acclaimed" | "underrated" | "any" | "bad";
+  genreMode: "strict" | "loose";
   description: string;
 };
 
@@ -28,6 +29,7 @@ const DEFAULT_INTENT: ParsedIntent = {
   strategies: ["discover"],
   mediaType: "any",
   quality: "any",
+  genreMode: "loose",
   description: "General recommendations",
 };
 
@@ -41,7 +43,7 @@ Return JSON with exactly these fields:
   "yearLte": number - Less than or equal to year (e.g. for "before 2000" output 1999). Omit if not specified.
   "mood": string - one of: "lighthearted", "dark", "intense", "cerebral", "emotional", "adventurous", "relaxing", "nostalgic", "any".
   "themes": string[] - broad thematic tags like "time travel", "heist", "zombie". Empty if none.
-  "keywords": string[] - TMDB-style keyword tags. These MUST be concrete, searchable plot elements that would appear on a movie's TMDB page. Think: what specific settings, occupations, substances, activities, or plot devices define this content? Generate 5-10 keywords. AVOID vague words like "consequences", "power struggle", "transformation", "double life". PREFER concrete words like "methamphetamine", "drug cartel", "chemistry teacher", "desert", "money laundering", "DEA", "cancer diagnosis".
+  "keywords": string[] - TMDB-style keyword tags. These MUST be concrete, searchable plot elements that would appear on a movie's TMDB page. Think: what specific settings, occupations, substances, activities, or plot devices define this content? Generate exactly 2-4 HIGHLY specific keywords. Do NOT over-generate keywords. AVOID vague words like "consequences", "power struggle", "transformation", "double life". PREFER concrete words like "methamphetamine", "drug cartel", "chemistry teacher", "desert".
   "referenceTitles": string[] - If the user mentions specific movies/shows by name (e.g. "like Breaking Bad"), extract the EXACT title names here.
   "people": string[] - If the user mentions specific actors or directors (e.g. "starring Tom Hanks", "directed by Nolan"), extract their names here. Empty if none.
   "strategies": string[] - VERY IMPORTANT. Select one or more routing strategies based on the query. Options:
@@ -54,6 +56,7 @@ Return JSON with exactly these fields:
     - "discover": The default strategy for anything else (genres, moods, themes, decades). Use this if none of the above perfectly match.
   "mediaType": string - "movie", "tv", or "any". Default "any". IMPORTANT: Only set this to "movie" or "tv" if the user EXPLICITLY says "movies", "films", "shows", "series", or "TV". If they just say "something like [Title]" or "like [Title]" without specifying, keep it "any" — great recommendations can cross the movie/TV boundary.
   "quality": string - "acclaimed", "underrated", "bad" (so-bad-it's-good), or "any". Default "any".
+  "genreMode": string - "strict" if the user explicitly asks for a specific combination of genres (like "action comedy" or "dark sci-fi"). "loose" if they list options ("action or comedy") or are vague.
   "description": string - brief 1-line summary of what the user wants.
 }
 
@@ -65,7 +68,9 @@ Examples:
 - "movies like breaking bad" → {"genres":["crime","drama","thriller"],"decades":[],"mood":"intense","themes":["drugs","crime","moral decay"],"keywords":["drug dealer","methamphetamine","drug cartel","money laundering","organized crime","drug trafficking","drug lord","cocaine"],"referenceTitles":["Breaking Bad"],"people":[],"strategies":["recommendations"],"mediaType":"movie","quality":"acclaimed","description":"Intense crime movies like Breaking Bad"}
 - "shows like breaking bad" → {"genres":["crime","drama","thriller"],"decades":[],"mood":"intense","themes":["drugs","crime","moral decay"],"keywords":["drug dealer","methamphetamine","drug cartel","money laundering","organized crime","drug trafficking"],"referenceTitles":["Breaking Bad"],"people":[],"strategies":["recommendations"],"mediaType":"tv","quality":"acclaimed","description":"Intense crime dramas like Breaking Bad"}
 
-IMPORTANT: Keywords are used to search the TMDB keyword database. Use concrete nouns and specific plot elements that would actually be tagged on movie/TV pages. For "like X" queries, think about what SPECIFIC elements make that show unique and what other content shares those elements.`;
+IMPORTANT: Keywords are used to search the TMDB keyword database. Use concrete nouns and specific plot elements that would actually be tagged on movie/TV pages. For "like X" queries, think about what SPECIFIC elements make that show unique and what other content shares those elements.
+
+AVOID GENERIC KEYWORDS: Do not output generic genre-restating keywords such as "detective", "police procedural", "investigation", "mystery", "solving crimes", "crime", "comedy", "drama", "action", "romance". Prefer unique, niche elements that distinguish specific content (e.g., "eccentric detective", "deduction", "amateur sleuth", "whodunit", "noir").`;
 
 function fallbackInterpret(query: string): ParsedIntent {
   const t = query.toLowerCase();
@@ -78,6 +83,7 @@ function fallbackInterpret(query: string): ParsedIntent {
     referenceTitles: [],
     people: [],
     strategies: [],
+    genreMode: "loose",
     description: query || "General picks",
   };
 
@@ -135,7 +141,7 @@ export async function interpretPrompt(query: string): Promise<ParsedIntent> {
   if (!query.trim()) return { ...DEFAULT_INTENT };
 
   const normalised = query.trim().toLowerCase().slice(0, 200);
-  const cacheKey = `gemini:intent:${normalised}:v7`;
+  const cacheKey = `gemini:intent:${normalised}:v12`;
 
   const cached = await getJson<ParsedIntent>(cacheKey);
   if (cached) {
@@ -180,6 +186,7 @@ export async function interpretPrompt(query: string): Promise<ParsedIntent> {
       strategies: safeStrArr(raw.strategies),
       mediaType: ["movie", "tv", "any"].includes(raw.mediaType) ? raw.mediaType : "any",
       quality: ["acclaimed", "underrated", "any", "bad"].includes(raw.quality) ? raw.quality : "any",
+      genreMode: raw.genreMode === "strict" ? "strict" : "loose",
       description: typeof raw.description === "string" ? raw.description : query,
     };
 
