@@ -500,10 +500,13 @@ export async function POST(request: Request) {
         if (keywordCsv && wantMovies) fetches.push(fetchDiscoverCustom({ page: 1, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_keywords: keywordCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "keyword_discover"))));
         if (keywordCsv && wantTV) fetches.push(fetchDiscoverTVCustom({ page: 1, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_keywords: keywordCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "keyword_discover"))));
         
-        // Genre-only (broadest fallback for variety pool — low score, never outranks recommendations)
+        // Genre-only or purely date-based fallback
         if (!keywordCsv) {
           if (wantMovies && movieGenreCsv) fetches.push(fetchDiscoverCustom({ page: 1, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_genres: movieGenreCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "genre_discover"))));
+          else if (wantMovies) fetches.push(fetchDiscoverCustom({ page: 1, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "genre_discover"))));
+          
           if (wantTV && tvGenreCsv) fetches.push(fetchDiscoverTVCustom({ page: 1, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_genres: tvGenreCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "genre_discover"))));
+          else if (wantTV) fetches.push(fetchDiscoverTVCustom({ page: 1, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "genre_discover"))));
         }
       }
     }
@@ -637,7 +640,10 @@ export async function POST(request: Request) {
         
         if (!keywordCsv) {
           if (wantMovies && movieGenreCsv) refills.push(fetchDiscoverCustom({ page, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_genres: movieGenreCsv, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "genre_discover"))));
+          else if (wantMovies) refills.push(fetchDiscoverCustom({ page, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, primary_release_date_gte: range.gte, primary_release_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "movie", "genre_discover"))));
+          
           if (wantTV && tvGenreCsv) refills.push(fetchDiscoverTVCustom({ page, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, with_genres: tvGenreCsv, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "genre_discover"))));
+          else if (wantTV) refills.push(fetchDiscoverTVCustom({ page, sort_by: "vote_count.desc", vote_count_gte: minVotes, vote_average_gte: minAvg, first_air_date_gte: range.gte, first_air_date_lte: range.lte }).then(items => items.map(m => mapMedia(m, "tv", "genre_discover"))));
         }
       }
       const refillSettled = await Promise.allSettled(refills);

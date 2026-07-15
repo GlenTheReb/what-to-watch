@@ -164,6 +164,7 @@ function DeckContent() {
   async function rerollPicks() {
     setLoading(true);
     setError(null);
+    setCards([]);
     setIndex(0);
     setDirection(0);
 
