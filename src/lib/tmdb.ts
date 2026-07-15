@@ -83,6 +83,24 @@ export const TV_GENRE_NAMES: Record<number, string> = {
 
 /* ─── Internals ─── */
 
+
+async function fetchWithRetry(url: string, options?: RequestInit, retries = 2): Promise<Response> {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const res = await fetch(url, options);
+      if (res.ok || res.status < 500) return res;
+      if (i < retries) await new Promise(r => setTimeout(r, 500 * (i + 1)));
+    } catch (e: any) {
+      if (i < retries) {
+        await new Promise(r => setTimeout(r, 500 * (i + 1)));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error('fetchWithRetry failed');
+}
+
 const TMDB_BASE = "https://api.themoviedb.org/3";
 
 function tmdbHeaders(): HeadersInit {
@@ -95,6 +113,72 @@ function tmdbAuthQuery(): string {
   const apiKey = process.env.TMDB_API_KEY;
   return apiKey ? `&api_key=${encodeURIComponent(apiKey)}` : "";
 }
+
+/* ─── Dynamic Genres ─── */
+
+export async function fetchMovieGenres(): Promise<{ id: number; name: string }[]> {
+  const key = `tmdb:genres:movie:v1`;
+  const cached = await getJson<{ id: number; name: string }[]>(key);
+  if (cached) return cached;
+
+  const url = `${TMDB_BASE}/genre/movie/list?language=en-US` + tmdbAuthQuery();
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
+  if (!res.ok) return [];
+  const data = await res.json();
+  const genres = data.genres ?? [];
+  await setJson(key, genres, 7 * 24 * 60 * 60);
+  return genres;
+}
+
+export async function fetchTVGenres(): Promise<{ id: number; name: string }[]> {
+  const key = `tmdb:genres:tv:v1`;
+  const cached = await getJson<{ id: number; name: string }[]>(key);
+  if (cached) return cached;
+
+  const url = `${TMDB_BASE}/genre/tv/list?language=en-US` + tmdbAuthQuery();
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
+  if (!res.ok) return [];
+  const data = await res.json();
+  const genres = data.genres ?? [];
+  await setJson(key, genres, 7 * 24 * 60 * 60);
+  return genres;
+}
+
+export async function getGenreIds(names: string[], mediaType: "movie" | "tv"): Promise<number[]> {
+  const genres = mediaType === "movie" ? await fetchMovieGenres() : await fetchTVGenres();
+  const map = mediaType === "movie" ? MOVIE_GENRE_MAP : TV_GENRE_MAP;
+  
+  if (genres.length === 0) {
+    return names.map(n => map[n]).filter(id => typeof id === "number");
+  }
+
+  const result: number[] = [];
+  for (const name of names) {
+    const match = genres.find(g => g.name.toLowerCase() === name.replace(/_/g, " ").toLowerCase());
+    if (match) {
+      result.push(match.id);
+    } else {
+      const staticId = map[name];
+      if (typeof staticId === "number") result.push(staticId);
+    }
+  }
+  return [...new Set(result)];
+}
+
+export async function getGenreNames(ids: number[], mediaType: "movie" | "tv"): Promise<string[]> {
+  const genres = mediaType === "movie" ? await fetchMovieGenres() : await fetchTVGenres();
+  const nameMap = mediaType === "movie" ? MOVIE_GENRE_NAMES : TV_GENRE_NAMES;
+
+  if (genres.length === 0) {
+    return ids.map(id => nameMap[id]).filter(Boolean);
+  }
+
+  return ids.map(id => {
+    const match = genres.find(g => g.id === id);
+    return match ? match.name : nameMap[id];
+  }).filter(Boolean);
+}
+
 
 /* ─── Movie Discover ─── */
 
@@ -129,7 +213,7 @@ export async function fetchDiscoverCustom(params: {
   if (primary_release_date_gte) qs.push(`primary_release_date.gte=${primary_release_date_gte}`);
   if (primary_release_date_lte) qs.push(`primary_release_date.lte=${primary_release_date_lte}`);
 
-  const res = await fetch(`${TMDB_BASE}/discover/movie?${qs.join("&")}` + tmdbAuthQuery(),
+  const res = await fetchWithRetry(`${TMDB_BASE}/discover/movie?${qs.join("&")}` + tmdbAuthQuery(),
     { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) throw new Error(`TMDB error: ${res.status}`);
   const data = (await res.json()) as TmdbListResponse<TmdbMovie>;
@@ -171,7 +255,7 @@ export async function fetchDiscoverTVCustom(params: {
   if (first_air_date_gte) qs.push(`first_air_date.gte=${first_air_date_gte}`);
   if (first_air_date_lte) qs.push(`first_air_date.lte=${first_air_date_lte}`);
 
-  const res = await fetch(`${TMDB_BASE}/discover/tv?${qs.join("&")}` + tmdbAuthQuery(),
+  const res = await fetchWithRetry(`${TMDB_BASE}/discover/tv?${qs.join("&")}` + tmdbAuthQuery(),
     { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) throw new Error(`TMDB error: ${res.status}`);
   const data = (await res.json()) as TmdbListResponse<TmdbTV>;
@@ -188,7 +272,7 @@ export async function searchMulti(query: string): Promise<TmdbMultiResult[]> {
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/search/multi?query=${encodeURIComponent(query)}&language=en-US&include_adult=false` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return [];
   const data = (await res.json()) as TmdbListResponse<TmdbMultiResult>;
   const results = (data.results ?? []).filter(r => r.media_type !== "person");
@@ -202,7 +286,7 @@ export async function searchKeywords(query: string): Promise<{ id: number; name:
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/search/keyword?query=${encodeURIComponent(query)}` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return [];
   const data = (await res.json()) as TmdbListResponse<{ id: number; name: string }>;
   const results = data.results ?? [];
@@ -218,7 +302,7 @@ export async function fetchMovieRecommendations(movieId: number): Promise<TmdbMo
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/movie/${movieId}/recommendations?language=en-US&page=1` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return [];
   const data = (await res.json()) as TmdbListResponse<TmdbMovie>;
   const results = data.results ?? [];
@@ -232,7 +316,35 @@ export async function fetchTVRecommendations(tvId: number): Promise<TmdbTV[]> {
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/tv/${tvId}/recommendations?language=en-US&page=1` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
+  if (!res.ok) return [];
+  const data = (await res.json()) as TmdbListResponse<TmdbTV>;
+  const results = data.results ?? [];
+  await setJson(key, results, 24 * 60 * 60);
+  return results;
+}
+
+export async function fetchMovieSimilar(movieId: number): Promise<TmdbMovie[]> {
+  const key = `tmdb:similar:movie:${movieId}:v1`;
+  const cached = await getJson<TmdbMovie[]>(key);
+  if (cached) return cached;
+
+  const url = `${TMDB_BASE}/movie/${movieId}/similar?language=en-US&page=1` + tmdbAuthQuery();
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
+  if (!res.ok) return [];
+  const data = (await res.json()) as TmdbListResponse<TmdbMovie>;
+  const results = data.results ?? [];
+  await setJson(key, results, 24 * 60 * 60);
+  return results;
+}
+
+export async function fetchTVSimilar(tvId: number): Promise<TmdbTV[]> {
+  const key = `tmdb:similar:tv:${tvId}:v1`;
+  const cached = await getJson<TmdbTV[]>(key);
+  if (cached) return cached;
+
+  const url = `${TMDB_BASE}/tv/${tvId}/similar?language=en-US&page=1` + tmdbAuthQuery();
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return [];
   const data = (await res.json()) as TmdbListResponse<TmdbTV>;
   const results = data.results ?? [];
@@ -251,7 +363,7 @@ export async function fetchTrending(
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/trending/${mediaType}/${timeWindow}?language=en-US` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return [];
   const data = (await res.json()) as TmdbListResponse<TmdbMovie | TmdbTV>;
   const results = data.results ?? [];
@@ -265,7 +377,7 @@ export async function fetchPopular(mediaType: "movie" | "tv"): Promise<(TmdbMovi
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/${mediaType}/popular?language=en-US&page=1` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return [];
   const data = (await res.json()) as TmdbListResponse<TmdbMovie | TmdbTV>;
   const results = data.results ?? [];
@@ -279,7 +391,7 @@ export async function fetchTopRated(mediaType: "movie" | "tv"): Promise<(TmdbMov
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/${mediaType}/top_rated?language=en-US&page=1` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return [];
   const data = (await res.json()) as TmdbListResponse<TmdbMovie | TmdbTV>;
   const results = data.results ?? [];
@@ -293,7 +405,7 @@ export async function fetchUpcomingMovies(): Promise<TmdbMovie[]> {
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/movie/upcoming?language=en-US&page=1` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return [];
   const data = (await res.json()) as TmdbListResponse<TmdbMovie>;
   const results = data.results ?? [];
@@ -309,7 +421,7 @@ export async function searchPerson(query: string): Promise<TmdbPerson[]> {
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/search/person?query=${encodeURIComponent(query)}&language=en-US&include_adult=false` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return [];
   const data = (await res.json()) as TmdbListResponse<TmdbPerson>;
   const results = data.results ?? [];
@@ -333,7 +445,7 @@ export async function fetchMovieCredits(movieId: number): Promise<TitleCredits> 
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/movie/${movieId}?append_to_response=credits,release_dates,watch/providers,videos&language=en-US` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return { cast: [], director: null, parentalRating: null, watchProviders: null, trailerUrl: null };
   const data = await res.json();
   const credits = data.credits ?? {};
@@ -363,7 +475,7 @@ export async function fetchTVCredits(tvId: number): Promise<TitleCredits> {
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/tv/${tvId}?append_to_response=credits,content_ratings,watch/providers,videos&language=en-US` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return { cast: [], director: null, parentalRating: null, watchProviders: null, trailerUrl: null };
   const data = await res.json();
   const credits = data.credits ?? {};
@@ -396,7 +508,7 @@ export async function fetchPersonMovieCredits(personId: number): Promise<TmdbPer
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/person/${personId}/movie_credits?language=en-US` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return null;
   const data = (await res.json()) as TmdbPersonCreditsMovie;
   await setJson(key, data, 24 * 60 * 60);
@@ -409,7 +521,7 @@ export async function fetchPersonTVCredits(personId: number): Promise<TmdbPerson
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/person/${personId}/tv_credits?language=en-US` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return null;
   const data = (await res.json()) as TmdbPersonCreditsTV;
   await setJson(key, data, 24 * 60 * 60);
@@ -427,7 +539,7 @@ export async function fetchKeywordTags(
   if (cached) return cached;
 
   const url = `${TMDB_BASE}/${mediaType}/${id}/keywords` + `?language=en-US` + tmdbAuthQuery();
-  const res = await fetch(url, { headers: tmdbHeaders(), cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: tmdbHeaders(), cache: "no-store" });
   if (!res.ok) return [];
 
   const data = await res.json();
