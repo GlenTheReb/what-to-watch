@@ -612,7 +612,8 @@ export async function POST(request: Request) {
   }
 
   /* ── 9b. Pool refill — fetch more pages if pool is too thin ── */
-  if (candidates.length < 30 && intent.strategies.includes("discover")) {
+  const targetPoolSize = Math.max(30, (reroll + 1) * 15);
+  if (candidates.length < targetPoolSize && intent.strategies.includes("discover")) {
     console.log(`[Deck] Pool thin (${candidates.length} candidates), fetching additional discover pages...`);
     const existingKeys = new Set(candidates.map(m => `${m.mediaType[0]}${m.id}`));
     const movieGenreCsv = intentMovieGenreIds.join(",");
@@ -625,8 +626,8 @@ export async function POST(request: Request) {
       ? intent.decades.slice(0, 2).map(d => { const [gte, lte] = decadeToRange(d); return { gte, lte }; })
       : [{ gte: "1970-01-01", lte: `${year}-12-31` }];
 
-    for (const page of [2, 3, 4, 5]) {
-      if (candidates.length >= 30) break;
+    for (const page of [2, 3, 4, 5, 6, 7]) {
+      if (candidates.length >= targetPoolSize) break;
       const refills: Promise<MediaItem[]>[] = [];
       for (const range of dateRanges) {
         if (keywordCsv && movieGenreCsv && wantMovies) {
@@ -721,15 +722,18 @@ export async function POST(request: Request) {
 
   const ranked = scored.map((x) => x.m);
 
-  // Pin the top 5 highest-scoring items — they always appear.
-  const pinned = ranked.slice(0, 5);
+  // Ensure each "Draw 10 More" (reroll) gets a completely unique, non-overlapping chunk of the ranked list.
+  const offset = reroll * 15;
+  const chunk = scored.slice(offset, offset + 15);
 
-  // Create a variety pool, but cut it off if scores drop off a cliff.
-  // This prevents irrelevant generic fallbacks from sneaking into highly specific queries.
-  const lastPinnedScore = pinned.length > 0 ? scored[pinned.length - 1].s : 0;
+  // Pin the top 5 highest-scoring items of this chunk — they always appear.
+  const pinned = chunk.slice(0, 5).map((x) => x.m);
+
+  // Create a variety pool from the rest of the chunk
+  const lastPinnedScore = pinned.length > 0 ? chunk[pinned.length - 1].s : 0;
   const minVarietyScore = lastPinnedScore * 0.8; 
   
-  let varietyPool = scored
+  let varietyPool = chunk
     .slice(5, 15)
     .filter((x) => x.s >= minVarietyScore)
     .map((x) => x.m);
